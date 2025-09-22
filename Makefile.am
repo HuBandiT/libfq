@@ -13,4 +13,4 @@ include_HEADERS = include/libfq-expbuffer.h include/libfq.h include/libfq-versio
 
 lib_LTLIBRARIES = libfq.la
 libfq_la_SOURCES = src/libfq.c src/fqexpbuffer.c src/fqmultibyte.c
-libfq_la_LDFLAGS = -release 0.6.1 -lfbclient -L$(fbclient)
+libfq_la_LDFLAGS = -release 0.6.2 -lfbclient -L$(fbclient)
