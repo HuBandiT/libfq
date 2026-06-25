@@ -35,7 +35,7 @@
       </indexterm>
 
       <para>
-		It should be possible to build &libfq; pn any UNIX-like system. Note that
+		It should be possible to build &libfq; on any UNIX-like system. Note that
 		the <productname>Firebird</productname> header and client library is required,
 		which may be installed as part of the Firebird binary package (e.g. on OS X), or which
 		need to be installed as separate packages (e.g. <literal>firebird-devel</literal>).
