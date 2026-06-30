@@ -4477,16 +4477,17 @@ FQclear(FBresult *result)
 
 	/*
 	 * NOTE: these should be cleared by _FQexecClearResult() anyway
-	 * XXX we should call _FQexecClearSQLDA here too
 	 */
 	if (result->sqlda_in != NULL)
 	{
+		_FQexecClearSQLDA(result->sqlda_in);
 		free(result->sqlda_in);
 		result->sqlda_in = NULL;
 	}
 
 	if (result->sqlda_out != NULL)
 	{
+		_FQexecClearSQLDA(result->sqlda_out);
 		free(result->sqlda_out);
 		result->sqlda_out  = NULL;
 	}
