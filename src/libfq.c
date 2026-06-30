@@ -1714,6 +1714,44 @@ FQexecPrepared(FBconn *conn,
 						 resultFormat);
 }
 
+
+static inline signed int __size_to_allocate_for_null_input_XSQLVAR_sqldata(XSQLVAR *var) {
+	int dtype = (var->sqltype & ~1); /* drop flag bit for now */
+
+	switch(dtype)
+	{
+		case SQL_SHORT:           return sizeof(ISC_SHORT);
+		case SQL_LONG:            return sizeof(ISC_LONG);
+		case SQL_INT64:           return sizeof(ISC_INT64);
+#if defined SQL_INT128
+			/* Firebird 4.0 and later */
+		case SQL_INT128:          return sizeof(__int128);
+#endif
+		case SQL_FLOAT:           return sizeof(float);
+		case SQL_DOUBLE:          return sizeof(double);
+		case SQL_VARYING:         return 0;
+		case SQL_TEXT:            return 0;
+		case SQL_TYPE_TIME:       return sizeof(ISC_TIME);
+#ifdef HAVE_TIMEZONE
+		case SQL_TIME_TZ:         return sizeof(ISC_TIME_TZ);
+		case SQL_TIME_TZ_EX:      return sizeof(ISC_TIME_TZ_EX);
+#endif
+		case SQL_TIMESTAMP:       return sizeof(ISC_TIMESTAMP);
+#ifdef HAVE_TIMEZONE
+		case SQL_TIMESTAMP_TZ:    return sizeof(ISC_TIMESTAMP_TZ);
+		case SQL_TIMESTAMP_TZ_EX: return sizeof(ISC_TIMESTAMP_TZ_EX);
+#endif
+		case SQL_TYPE_DATE:       return sizeof(ISC_DATE);
+		case SQL_BLOB:            return sizeof(ISC_QUAD);
+#if defined SQL_BOOLEAN
+			/* Firebird 3.0 and later */
+		case SQL_BOOLEAN:         return sizeof(FB_BOOLEAN);
+#endif
+		default:                  return -1;
+	}
+}
+
+
 /**
  * _FQexecParams()
  *
@@ -1800,85 +1838,9 @@ _FQexecParams(FBconn *conn,
 		/* For NULL values, initialise empty sqldata/sqllen */
 		if (paramValues[i] == NULL)
 		{
-			int size = -1;
+			int size = __size_to_allocate_for_null_input_XSQLVAR_sqldata(var);
 
-			switch(dtype)
-			{
-				case SQL_SHORT:
-					size = sizeof(ISC_SHORT);
-					break;
-
-				case SQL_LONG:
-					size = sizeof(ISC_LONG);
-					break;
-
-				case SQL_INT64:
-					size = sizeof(ISC_INT64);
-					break;
-#if defined SQL_INT128
-				/* Firebird 4.0 and later */
-				case SQL_INT128:
-					size = sizeof(__int128);
-					break;
-#endif
-				case SQL_FLOAT:
-					size = sizeof(float);
-					break;
-
-				case SQL_DOUBLE:
-					size = sizeof(double);
-					break;
-
-				case SQL_VARYING:
-					size = 0;
-					break;
-
-				case SQL_TEXT:
-					size = 0;
-					break;
-
-				case SQL_TYPE_TIME:
-					size = sizeof(ISC_TIME);
-					break;
-#ifdef HAVE_TIMEZONE
-				case SQL_TIME_TZ:
-					size = sizeof(ISC_TIME_TZ);
-					break;
-
-				case SQL_TIME_TZ_EX:
-					size = sizeof(ISC_TIME_TZ_EX);
-					break;
-#endif
-
-				case SQL_TIMESTAMP:
-					size = sizeof(ISC_TIMESTAMP);
-					break;
-#ifdef HAVE_TIMEZONE
-				case SQL_TIMESTAMP_TZ:
-					size = sizeof(ISC_TIMESTAMP_TZ);
-					break;
-
-				case SQL_TIMESTAMP_TZ_EX:
-					size = sizeof(ISC_TIMESTAMP_TZ_EX);
-					break;
-#endif
-				case SQL_TYPE_DATE:
-					size = sizeof(ISC_DATE);
-					break;
-
-
-				case SQL_BLOB:
-					size = sizeof(ISC_QUAD);
-					break;
-
-#if defined SQL_BOOLEAN
-				/* Firebird 3.0 and later */
-				case SQL_BOOLEAN:
-					size = sizeof(FB_BOOLEAN);
-					break;
-#endif
-
-				default:
+			if (size < 0)
 				{
 					FQExpBufferData error_message_buf;
 
@@ -1894,7 +1856,6 @@ _FQexecParams(FBconn *conn,
 					_FQexecClearResult(result);
 					termFQExpBuffer(&error_message_buf);
 				}
-			}
 
 			/* var->sqldata remains NULL to indicate NULL */
 			if (size >= 0)
