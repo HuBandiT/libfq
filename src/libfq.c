@@ -1108,6 +1108,23 @@ static void __report_XSQLVAR_buffer_allocation_error(FBconn *conn, FBresult *res
 }
 
 
+static void __allocate_buffers_for_XSQLVARs_of_XSQLDA(FBconn *conn, FBresult *result, XSQLDA *xsqlda) {
+	XSQLVAR *var;
+	short	i;
+
+	for (i = 0, var = xsqlda->sqlvar; i < xsqlda->sqld; var++, i++)
+	{
+		int allocation_error = __allocate_buffers_of_XSQLVAR(var);
+		if (allocation_error)
+		{
+			__report_XSQLVAR_buffer_allocation_error(conn, result, var);
+			return;
+		}
+	}
+
+}
+
+
 /**
  * _FQexecInitOutputSQLDA()
  *
@@ -1124,22 +1141,9 @@ static void __report_XSQLVAR_buffer_allocation_error(FBconn *conn, FBresult *res
 static void
 _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 {
-	XSQLVAR *var;
-	short	 sqltype, i;
-
-	for (i = 0, var = result->sqlda_out->sqlvar; i < result->ncols; var++, i++)
-	{
-		sqltype = (var->sqltype & ~1); /* drop flag bit for now */
-
-		int allocation_error = __allocate_buffers_of_XSQLVAR(var);
-
-		if (allocation_error)
-		{
-			__report_XSQLVAR_buffer_allocation_error(conn, result, var);
-		}
-	}
-
+	__allocate_buffers_for_XSQLVARs_of_XSQLDA(conn, result, result->sqlda_out);
 }
+
 
 
 /**
