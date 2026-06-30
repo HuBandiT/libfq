@@ -1071,6 +1071,23 @@ static inline signed int __size_to_allocate_for_XSQLVAR_sqldata(XSQLVAR *var) {
 }
 
 
+static signed int __allocate_buffers_of_XSQLVAR(XSQLVAR *var) {
+	signed int size = __size_to_allocate_for_XSQLVAR_sqldata(var);
+
+	if (size < 0) return size;
+
+	var->sqldata = (char *)malloc(size);
+
+	const typeof(var->sqltype) is_this_field_nullable_flag = 1;
+
+	if (var->sqltype & is_this_field_nullable_flag)
+	{
+		/* allocate variable to hold NULL status */
+		var->sqlind = (short *)malloc(sizeof(short));
+	}
+}
+
+
 /**
  * _FQexecInitOutputSQLDA()
  *
@@ -1094,12 +1111,9 @@ _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 	{
 		sqltype = (var->sqltype & ~1); /* drop flag bit for now */
 
-		signed int size = __size_to_allocate_for_XSQLVAR_sqldata(var);
-		if (size >= 0)
-		{
-			var->sqldata = (char *)malloc(sizeof(ISC_SHORT));
-		}
-		else
+		int allocation_error = __allocate_buffers_of_XSQLVAR(var);
+
+		if (allocation_error)
 			{
 				FQExpBufferData error_message_buf;
 
@@ -1117,12 +1131,6 @@ _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 
 				return;
 			}
-
-		if (var->sqltype & 1)
-		{
-			/* allocate variable to hold NULL status */
-			var->sqlind = (short *)malloc(sizeof(short));
-		}
 	}
 
 }
