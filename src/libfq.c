@@ -1032,7 +1032,7 @@ void _FQexecClearSQLDA(XSQLDA *sqlda)
 }
 
 
-static inline signed int __size_to_allocate_for_XSQLVAR_sqldata(XSQLVAR *var) {
+static inline signed int __size_to_allocate_for_receiving_XSQLVAR_sqldata(XSQLVAR *var) {
 	const typeof(var->sqltype) is_this_field_nullable_flag = 1;
 	short sqltype = (var->sqltype & ~is_this_field_nullable_flag); /* drop flag bit for now */
 
@@ -1070,9 +1070,8 @@ static inline signed int __size_to_allocate_for_XSQLVAR_sqldata(XSQLVAR *var) {
 	}
 }
 
-
 static signed int __allocate_buffers_of_XSQLVAR(XSQLVAR *var) {
-	signed int size = __size_to_allocate_for_XSQLVAR_sqldata(var);
+	signed int size = __size_to_allocate_for_receiving_XSQLVAR_sqldata(var);
 
 	if (size < 0) return size;
 
