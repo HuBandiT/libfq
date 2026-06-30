@@ -1032,6 +1032,45 @@ void _FQexecClearSQLDA(XSQLDA *sqlda)
 }
 
 
+static inline signed int __size_to_allocate_for_XSQLVAR_sqldata(XSQLVAR *var) {
+	const typeof(var->sqltype) is_this_field_nullable_flag = 1;
+	short sqltype = (var->sqltype & ~is_this_field_nullable_flag); /* drop flag bit for now */
+
+	switch(sqltype)
+	{
+		case SQL_VARYING:           return sizeof(ISC_SHORT) + var->sqllen;
+		case SQL_TEXT:              return var->sqllen;
+		case SQL_SHORT:             return sizeof(ISC_SHORT);
+		case SQL_LONG:              return sizeof(ISC_LONG);
+		case SQL_INT64:             return sizeof(ISC_INT64);
+		case SQL_FLOAT:             return sizeof(float);
+		case SQL_DOUBLE:            return sizeof(double);
+		case SQL_TYPE_TIME:         return sizeof(ISC_TIME);
+#ifdef HAVE_TIMEZONE
+		case SQL_TIME_TZ:           return sizeof(ISC_TIME_TZ);
+		case SQL_TIME_TZ_EX:        return sizeof(ISC_TIME_TZ_EX);
+#endif
+		case SQL_TIMESTAMP:         return sizeof(ISC_TIMESTAMP);
+#ifdef HAVE_TIMEZONE
+		case SQL_TIMESTAMP_TZ:      return sizeof(ISC_TIMESTAMP_TZ);
+		case SQL_TIMESTAMP_TZ_EX:   return sizeof(ISC_TIMESTAMP_TZ_EX);
+#endif
+		case SQL_TYPE_DATE:         return sizeof(ISC_DATE);
+		case SQL_BLOB:              return sizeof(ISC_QUAD);
+#if defined SQL_BOOLEAN
+			/* Firebird 3.0 and later */
+		case SQL_BOOLEAN:           return sizeof(FB_BOOLEAN);
+#endif
+
+#if defined SQL_INT128
+			/* Firebird 4.0 and later */
+		case SQL_INT128:            return sizeof(__int128);
+#endif
+		default:                    return -1;
+	}
+}
+
+
 /**
  * _FQexecInitOutputSQLDA()
  *
@@ -1054,76 +1093,13 @@ _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 	for (i = 0, var = result->sqlda_out->sqlvar; i < result->ncols; var++, i++)
 	{
 		sqltype = (var->sqltype & ~1); /* drop flag bit for now */
-		switch(sqltype)
+
+		signed int size = __size_to_allocate_for_XSQLVAR_sqldata(var);
+		if (size >= 0)
 		{
-			case SQL_VARYING:
-				var->sqldata = (char *)malloc(sizeof(char)*var->sqllen + 2);
-				break;
-			case SQL_TEXT:
-				var->sqldata = (char *)malloc(sizeof(char)*var->sqllen);
-				break;
-
-			case SQL_SHORT:
-				var->sqldata = (char *)malloc(sizeof(ISC_SHORT));
-				break;
-			case SQL_LONG:
-				var->sqldata = (char *)malloc(sizeof(ISC_LONG));
-				break;
-			case SQL_INT64:
-				var->sqldata = (char *)malloc(sizeof(ISC_INT64));
-				break;
-
-			case SQL_FLOAT:
-				var->sqldata = (char *)malloc(sizeof(float));
-				break;
-			case SQL_DOUBLE:
-				var->sqldata = (char *)malloc(sizeof(double));
-				break;
-
-			case SQL_TYPE_TIME:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIME));
-				break;
-#ifdef HAVE_TIMEZONE
-			case SQL_TIME_TZ:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIME_TZ));
-				break;
-			case SQL_TIME_TZ_EX:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIME_TZ_EX));
-				break;
-#endif
-			case SQL_TIMESTAMP:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIMESTAMP));
-				break;
-#ifdef HAVE_TIMEZONE
-			case SQL_TIMESTAMP_TZ:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIMESTAMP_TZ));
-				break;
-			case SQL_TIMESTAMP_TZ_EX:
-				var->sqldata = (char *)malloc(sizeof(ISC_TIMESTAMP_TZ_EX));
-				break;
-#endif
-			case SQL_TYPE_DATE:
-				var->sqldata = (char *)malloc(sizeof(ISC_DATE));
-				break;
-
-			case SQL_BLOB:
-				var->sqldata = (char *)malloc(sizeof(ISC_QUAD));
-				break;
-
-#if defined SQL_BOOLEAN
-			/* Firebird 3.0 and later */
-			case SQL_BOOLEAN:
-				var->sqldata = (char *)malloc(sizeof(FB_BOOLEAN));
-				break;
-#endif
-
-#if defined SQL_INT128
-			/* Firebird 4.0 and later */
-			case SQL_INT128:
-				var->sqldata = (char *)malloc(sizeof(__int128));
-				break;
-#endif
-			default:
+			var->sqldata = (char *)malloc(sizeof(ISC_SHORT));
+		}
+		else
 			{
 				FQExpBufferData error_message_buf;
 
@@ -1141,7 +1117,7 @@ _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 
 				return;
 			}
-		}
+
 		if (var->sqltype & 1)
 		{
 			/* allocate variable to hold NULL status */
