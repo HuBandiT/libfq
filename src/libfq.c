@@ -1088,6 +1088,26 @@ static signed int __allocate_buffers_of_XSQLVAR(XSQLVAR *var) {
 }
 
 
+static void __report_XSQLVAR_buffer_allocation_error(FBconn *conn, FBresult *result, XSQLVAR *var) {
+	const typeof(var->sqltype) is_this_field_nullable_flag = 1;
+	short sqltype = (var->sqltype & ~is_this_field_nullable_flag); /* drop flag bit for now */
+
+	FQExpBufferData error_message_buf;
+
+	initFQExpBuffer(&error_message_buf);
+	appendFQExpBuffer(&error_message_buf,
+			"Unhandled sqlda_out type: %i", sqltype);
+
+	_FQsetResultError(conn, result);
+	_FQsaveMessageField(&result, FB_DIAG_DEBUG, error_message_buf.data);
+
+	result->resultStatus = FBRES_FATAL_ERROR;
+
+	_FQexecClearResult(result);
+	termFQExpBuffer(&error_message_buf);
+}
+
+
 /**
  * _FQexecInitOutputSQLDA()
  *
@@ -1114,23 +1134,9 @@ _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
 		int allocation_error = __allocate_buffers_of_XSQLVAR(var);
 
 		if (allocation_error)
-			{
-				FQExpBufferData error_message_buf;
-
-				initFQExpBuffer(&error_message_buf);
-				appendFQExpBuffer(&error_message_buf,
-								  "Unhandled sqlda_out type: %i", sqltype);
-
-				_FQsetResultError(conn, result);
-				_FQsaveMessageField(&result, FB_DIAG_DEBUG, error_message_buf.data);
-
-				result->resultStatus = FBRES_FATAL_ERROR;
-
-				_FQexecClearResult(result);
-				termFQExpBuffer(&error_message_buf);
-
-				return;
-			}
+		{
+			__report_XSQLVAR_buffer_allocation_error(conn, result, var);
+		}
 	}
 
 }
