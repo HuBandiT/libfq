@@ -92,7 +92,7 @@ static void _FQexecClearResult(FBresult *result);
 static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle);
 static void _FQexecClearSQLDA(XSQLDA *sqlda);
 static void _FQexecFillTuplesArray(FBresult *result);
-static void _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result);
+static void __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result);
 static ISC_LONG _FQexecParseStatementType(char *info_buffer);
 
 static FBresult *_FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt);
@@ -1126,7 +1126,7 @@ static void __allocate_buffers_for_XSQLVARs_of_XSQLDA(FBconn *conn, FBresult *re
 
 
 /**
- * _FQexecInitOutputSQLDA()
+ * __allocate_buffers_to_receive_query_result_row()
  *
  * Initialise an output SQLDA to hold a retrieved row
  *
@@ -1139,7 +1139,7 @@ static void __allocate_buffers_for_XSQLVARs_of_XSQLDA(FBconn *conn, FBresult *re
  * somewhat tricky to get right.
  */
 static void
-_FQexecInitOutputSQLDA(FBconn *conn, FBresult *result)
+__allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result)
 {
 	__allocate_buffers_for_XSQLVARs_of_XSQLDA(conn, result, result->sqlda_out);
 }
@@ -1469,7 +1469,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		result->ncols = result->sqlda_out->sqld;
 	}
 
-	_FQexecInitOutputSQLDA(conn, result);
+	__allocate_buffers_to_receive_query_result_row(conn, result);
 
 	if (isc_dsql_execute(conn->status, trans, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
 	{
@@ -2344,7 +2344,7 @@ _FQexecParams(FBconn *conn,
 		result->ncols = result->sqlda_out->sqld;
 	}
 
-	_FQexecInitOutputSQLDA(conn, result);
+	__allocate_buffers_to_receive_query_result_row(conn, result);
 
 	/* "isc_info_sql_stmt_exec_procedure" also covers "RETURNING ..." statements */
 	if (result->statement_type == isc_info_sql_stmt_exec_procedure)
