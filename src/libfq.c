@@ -1022,7 +1022,7 @@ void _FQexecClearSQLDA(XSQLDA *sqlda)
 			var->sqldata = NULL;
 		}
 
-		if (var->sqltype & 1 && var->sqlind != NULL)
+		if (var->sqlind != NULL)
 		{
 			/* deallocate NULL status indicator if necessary */
 			free(var->sqlind);
