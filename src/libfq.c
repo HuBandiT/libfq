@@ -90,7 +90,7 @@ static FBresult *_FQinitResult(bool init_sqlda_in);
 static void _FQinitResultSqlDa(FBresult *result, bool init_sqlda_in);
 static void _FQexecClearResult(FBresult *result);
 static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle);
-static void _FQexecClearSQLDA(FBresult *result, XSQLDA *sqlda);
+static void _FQexecClearSQLDA(XSQLDA *sqlda);
 static void _FQexecFillTuplesArray(FBresult *result);
 static void _FQexecInitOutputSQLDA(FBconn *conn, FBresult *result);
 static ISC_LONG _FQexecParseStatementType(char *info_buffer);
@@ -971,14 +971,14 @@ _FQexecClearResult(FBresult *result)
 {
 	if (result->sqlda_in != NULL)
 	{
-		_FQexecClearSQLDA(result, result->sqlda_in);
+		_FQexecClearSQLDA(result->sqlda_in);
 		free(result->sqlda_in);
 		result->sqlda_in = NULL;
 	}
 
 	if (result->sqlda_out != NULL)
 	{
-		_FQexecClearSQLDA(result, result->sqlda_out);
+		_FQexecClearSQLDA(result->sqlda_out);
 
 		free(result->sqlda_out);
 		result->sqlda_out = NULL;
@@ -1009,12 +1009,12 @@ _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_h
  *
  */
 static
-void _FQexecClearSQLDA(FBresult *result, XSQLDA *sqlda)
+void _FQexecClearSQLDA(XSQLDA *sqlda)
 {
 	XSQLVAR *var;
 	short	 i;
 
-	for (i = 0, var = result->sqlda_out->sqlvar; i < result->ncols; var++, i++)
+	for (i = 0, var = sqlda->sqlvar; i < sqlda->sqln; var++, i++)
 	{
 		if (var->sqldata != NULL)
 		{
