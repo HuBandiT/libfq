@@ -93,6 +93,7 @@ static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_r
 static void _FQexecClearSQLDA(XSQLDA *sqlda);
 static void _FQexecFillTuplesArray(FBresult *result);
 static void __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result);
+static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars);
 static ISC_LONG _FQexecParseStatementType(char *info_buffer);
 
 static FBresult *_FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt);
@@ -944,20 +945,14 @@ _FQinitResultSqlDa(FBresult *result, bool init_sqlda_in)
 {
 	if (init_sqlda_in == true)
 	{
-		result->sqlda_in = (XSQLDA *) malloc(XSQLDA_LENGTH(FB_XSQLDA_INITLEN));
-		memset(result->sqlda_in, '\0', XSQLDA_LENGTH(FB_XSQLDA_INITLEN));
-		result->sqlda_in->sqln = FB_XSQLDA_INITLEN;
-		result->sqlda_in->version = SQLDA_VERSION1;
+		result->sqlda_in = ___allocate_XSQLDA(FB_XSQLDA_INITLEN);
 	}
 	else
 	{
 		result->sqlda_in = NULL;
 	}
 
-	result->sqlda_out = (XSQLDA *) malloc(XSQLDA_LENGTH(FB_XSQLDA_INITLEN));
-	memset(result->sqlda_out, '\0', XSQLDA_LENGTH(FB_XSQLDA_INITLEN));
-	result->sqlda_out->sqln = FB_XSQLDA_INITLEN;
-	result->sqlda_out->version = SQLDA_VERSION1;
+	result->sqlda_out = ___allocate_XSQLDA(FB_XSQLDA_INITLEN);
 }
 
 /**
@@ -1124,6 +1119,18 @@ static void __allocate_buffers_for_XSQLVARs_of_XSQLDA(FBconn *conn, FBresult *re
 }
 
 
+static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars) {
+	const int size = XSQLDA_LENGTH(n_sqlvars);
+	XSQLDA *new_sqlda = (XSQLDA *) malloc(size);
+
+	if(new_sqlda != NULL) {
+		memset(new_sqlda, '\0', size);
+		new_sqlda->sqln = n_sqlvars;
+		new_sqlda->version = SQLDA_VERSION1;
+	}
+
+	return new_sqlda;
+}
 /**
  * __allocate_buffers_to_receive_query_result_row()
  *
@@ -1484,11 +1491,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	if (result->sqlda_out->sqln < result->ncols) {
 
 		free(result->sqlda_out);
-		result->sqlda_out = (XSQLDA *) malloc(XSQLDA_LENGTH (result->ncols));
-		memset(result->sqlda_out, '\0', XSQLDA_LENGTH (result->ncols));
-
-		result->sqlda_out->version = SQLDA_VERSION1;
-		result->sqlda_out->sqln = result->ncols;
+		result->sqlda_out = ___allocate_XSQLDA(result->ncols);
 
 		if (isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
 		{
@@ -1825,10 +1828,7 @@ _FQexecParams(FBconn *conn,
 		int sqln = result->sqlda_in->sqld;
 
 		free(result->sqlda_in);
-		result->sqlda_in = (XSQLDA *)malloc(XSQLDA_LENGTH(sqln));
-		memset(result->sqlda_in, '\0', XSQLDA_LENGTH(sqln));
-		result->sqlda_in->sqln = sqln;
-		result->sqlda_in->version = SQLDA_VERSION1;
+		result->sqlda_in = ___allocate_XSQLDA(sqln);
 		isc_dsql_describe_bind(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_in);
 
 		FQlog(conn, DEBUG1, "%lu; sqln now %i %i", XSQLDA_LENGTH(sqln), sqln, result->sqlda_in->sqld );
@@ -2308,11 +2308,7 @@ _FQexecParams(FBconn *conn,
 
 	if (result->sqlda_out->sqln < result->ncols) {
 		free(result->sqlda_out);
-		result->sqlda_out = (XSQLDA *) malloc(XSQLDA_LENGTH (result->ncols));
-		memset(result->sqlda_out, '\0', XSQLDA_LENGTH (result->ncols));
-
-		result->sqlda_out->version = SQLDA_VERSION1;
-		result->sqlda_out->sqln = result->ncols;
+		result->sqlda_out = ___allocate_XSQLDA(result->ncols);
 
 		isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out);
 
