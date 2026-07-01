@@ -1206,6 +1206,45 @@ FQexec(FBconn *conn, const char *stmt)
 }
 
 
+
+static ISC_STATUS __allocate_statement(FBconn *conn, FBresult *result, bool version2) {
+	ISC_STATUS status;
+
+	if (version2) {
+		status = isc_dsql_alloc_statement2(conn->status, &conn->db, &result->stmt_handle);
+	}
+	else
+	{
+		status = isc_dsql_allocate_statement(conn->status, &conn->db, &result->stmt_handle);
+	}
+
+	if (status)
+	{
+		result->resultStatus = FBRES_FATAL_ERROR;
+		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_allocate_statement");
+		_FQsetResultError(conn, result);
+
+		_FQexecClearResult(result);
+	}
+
+	return status;
+}
+
+
+static ISC_STATUS __prepare_statement(FBconn *conn, FBresult *result, void *trans, const char *stmt, XSQLDA *out) {
+	ISC_STATUS status = isc_dsql_prepare(conn->status, trans, &result->stmt_handle, 0, stmt, SQL_DIALECT_V6, out);
+
+	if (status)
+	{
+		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_prepare");
+		_FQsetResultError(conn, result);
+		result->resultStatus = FBRES_FATAL_ERROR;
+		_FQexecClearResult(result);
+	}
+
+	return status;
+}
+
 /**
  * _FQexec()
  *
@@ -1228,14 +1267,11 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 
 	result = _FQinitResult(false);
 
-	/* Allocate a statement. */
-	if (isc_dsql_allocate_statement(conn->status, &conn->db, &result->stmt_handle))
-	{
-		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_allocate_statement");
-		_FQsetResultError(conn, result);
+	ISC_STATUS error;
 
-		_FQexecClearResult(result);
+	error = __allocate_statement(conn, result, false);
+	if (error)
+	{
 		return result;
 	}
 
@@ -1250,17 +1286,10 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	}
 
 	/* Prepare the statement. */
-	if (isc_dsql_prepare(conn->status, trans, &result->stmt_handle, 0, stmt, SQL_DIALECT_V6, result->sqlda_out))
+	error = __prepare_statement(conn, result, trans, stmt, result->sqlda_out);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_prepare");
-
-		_FQsetResultError(conn, result);
-
 		_FQrollbackTransaction(conn, trans);
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQexecClearResult(result);
-
 		return result;
 	}
 
@@ -1610,15 +1639,11 @@ FQprepare(FBconn *conn,
 	result = _FQinitResult(true);
 
 	/* Allocate a statement. */
-	if (isc_dsql_alloc_statement2(conn->status, &conn->db, &result->stmt_handle))
-	{
-		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_allocate_statement");
-		_FQsetResultError(conn, result);
+	ISC_STATUS error;
 
-		_FQexecClearResult(result);
+	error = __allocate_statement(conn, result, true);
+	if (error)
 		return result;
-	}
 
 	/* An active transaction is required to prepare the statement -
 	 * if no transaction handle was provided by the caller,
@@ -1631,17 +1656,10 @@ FQprepare(FBconn *conn,
 	}
 
 	/* Prepare the statement. */
-	if (isc_dsql_prepare(conn->status, trans, &result->stmt_handle, 0, stmt, SQL_DIALECT_V6, NULL))
+	error = __prepare_statement(conn, result, trans, stmt, NULL);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_prepare");
-
-		_FQsetResultError(conn, result);
-
 		_FQrollbackTransaction(conn, trans);
-
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQexecClearResult(result);
 		return result;
 	}
 
@@ -4476,22 +4494,18 @@ _FQexplainStatement(FBconn *conn, const char *stmt, char plan_type)
 		return NULL;
 	}
 
+	ISC_STATUS error;
 
-	if (isc_dsql_allocate_statement(conn->status, &conn->db, &result->stmt_handle) != 0)
+	error = __allocate_statement(conn, result, false);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_allocate_statement");
-		_FQsetResultError(conn, result);
-
 		FQclear(result);
 		return NULL;
 	}
 
-	/* Prepare the statement. */
-	if (isc_dsql_prepare(conn->status, &conn->trans, &result->stmt_handle, 0, stmt, SQL_DIALECT_V6, result->sqlda_out))
+  error = __prepare_statement(conn, result, &conn->trans, stmt, result->sqlda_out);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_prepare");
-		_FQsetResultError(conn, result);
-
 		FQclear(result);
 		return NULL;
 	}
