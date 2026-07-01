@@ -1009,6 +1009,8 @@ void _FQexecClearSQLDA(XSQLDA *sqlda)
 	XSQLVAR *var;
 	short	 i;
 
+	if (sqlda == NULL) return;
+
 	for (i = 0, var = sqlda->sqlvar; i < sqlda->sqln; var++, i++)
 	{
 		if (var->sqldata != NULL)
