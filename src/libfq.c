@@ -127,7 +127,7 @@ static const char*  _FQgetLogLevelName(int log_level);
 
 #if defined SQL_INT128
 static int format_int128(__int128 val, char *dst);
-static __int128 convert_int128(const char *s);
+static __int128 __parse_int128(const char *s);
 #endif
 
 #ifdef HAVE_TIMEZONE
@@ -1766,52 +1766,404 @@ static inline signed int __size_to_allocate_for_null_input_XSQLVAR_sqldata(XSQLV
 }
 
 
-/**
- * _FQexecParams()
- *
- * Actually execute the parameterized query. See above for parameter
- * details.
- *
- * Be warned, this was a pain to kludge together (oh Firebird C API, how
- * I love your cryptic minimalism) and is in dire need of refactoring.
- * But it works. Mostly.
- */
-static FBresult *
-_FQexecParams(FBconn *conn,
-			  isc_tr_handle *trans,
-			  FBresult	 *result,
-			  bool free_result_stmt_handle,
-			  int nParams,
-			  const char * const *paramValues,
-			  const int *paramLengths,
-			  const int *paramFormats,
-			  int resultFormat
-	)
+/* FIXME: would be nice to have bounds checking and error reporting */
+static long __parse_short_or_long(FBconn *conn, XSQLVAR *var, const char *input_string) {
+	char format[64];
+	long p, q, r, result;
+	const char *svalue;
+	int len;
+
+	p = q = r = (long) 0;
+	svalue = input_string;
+	len = strlen(svalue);
+
+	/* with decimals? */
+	if (var->sqlscale < 0)
+	{
+		/* NUMERIC(?,?) */
+		int	 scale = (int) (pow(10.0, (double) -var->sqlscale));
+		int	 dscale;
+		char *tmp;
+		char *neg;
+
+		FQlog(conn, DEBUG1, "sqlscale < 0; scale is %i", scale);
+
+		sprintf(format, "%%ld.%%%dld%%1ld", -var->sqlscale);
+
+		/* negative -0.x hack */
+		neg = strchr(svalue, '-');
+		if (neg)
+		{
+			svalue = neg + 1;
+			len = strlen(svalue);
+		}
+
+		if (!sscanf(svalue, format, &p, &q, &r))
+		{
+			/* here we handle values such as .78 passed as string */
+			sprintf(format, ".%%%dld%%1ld", -var->sqlscale);
+			if (!sscanf(svalue, format, &q, &r) )
+				FQlog(conn, DEBUG1, "problem parsing SQL_SHORT/SQL_LONG type");
+		}
+
+		/* Round up if r is 5 or greater */
+		if (r >= 5)
+		{
+			q++;			/* round q up by one */
+			p += q / scale; /* round p up by one if q overflows */
+			q %= scale;		/* modulus if q overflows */
+		}
+
+		/* decimal scaling */
+		tmp	   = strchr(svalue, '.');
+		dscale = (tmp)
+			? -var->sqlscale - (len - (int) (tmp - svalue)) + 1
+			: 0;
+
+		if (dscale < 0) dscale = 0;
+
+		/* final result */
+		result = (long) (p * scale + q * (int) (pow(10.0, (double) dscale))) * (neg ? -1 : 1);
+		FQlog(conn, DEBUG1, "SQL_SHORT/LONG: decimal result is %li", result);
+	}
+	else
+	{
+		/* numeric(?,0): scan for one decimal and do rounding*/
+
+		sprintf(format, "%%ld.%%1ld");
+
+		if (!sscanf(svalue, format, &p, &r))
+		{
+			sprintf(format, ".%%1ld");
+			if (!sscanf(svalue, format, &r))
+				FQlog(conn, DEBUG1, "problem parsing SQL_SHORT/SQL_LONG type");
+		}
+
+		/* rounding */
+		if (r >= 5)
+		{
+			if (p < 0) p--; else p++;
+		}
+
+		result = (long) p;
+	}
+
+	return result;
+}
+
+
+/* FIXME: would be nice to have bounds checking and error reporting */
+static ISC_INT64 __parse_int64(FBconn *conn, XSQLVAR *var, const char *input_string) {
+	const char	   *svalue;
+	char	 format[64];
+	ISC_INT64 p, q, r;
+	int len;
+
+	p = q = r = (ISC_INT64) 0;
+	svalue = input_string;
+	len = strlen(svalue);
+
+	FQlog(conn, DEBUG1, "INT64");
+
+	/* with decimals? */
+	if (var->sqlscale < 0)
+	{
+		/* numeric(?,?) */
+		int	 scale = (int) (pow(10.0, (double) -var->sqlscale));
+		int	 dscale;
+		char *tmp;
+		char *neg;
+
+		sprintf(format, S_INT64_FULL, -var->sqlscale);
+
+		/* negative -0.x hack */
+		neg = strchr(svalue, '-');
+		if (neg)
+		{
+			svalue = neg + 1;
+			len = strlen(svalue);
+		}
+
+		if (!sscanf(svalue, format, &p, &q, &r))
+		{
+			/* here we handle values such as .78 passed as string */
+			sprintf(format, S_INT64_DEC_FULL, -var->sqlscale);
+			if (!sscanf(svalue, format, &q, &r))
+				FQlog(conn, DEBUG1, "problem parsing SQL_INT64 type");
+		}
+
+		/* Round up if r is 5 or greater */
+		if (r >= 5)
+		{
+			q++;			/* round q up by one */
+			p += q / scale; /* round p up by one if q overflows */
+			q %= scale;		/* modulus if q overflows */
+		}
+
+		/* decimal scaling */
+		tmp	   = strchr(svalue, '.');
+		dscale = (tmp)
+			? -var->sqlscale - (len - (int) (tmp - svalue)) + 1
+			: 0;
+
+		if (dscale < 0)
+			dscale = 0;
+
+		return (ISC_INT64) (p * scale + q * (int) (pow(10.0, (double) dscale))) * (neg? -1: 1);
+	}
+	else
+	{
+		/* NUMERIC(?,0): scan for one decimal and do rounding */
+
+		sprintf(format, S_INT64_NOSCALE);
+
+		if (!sscanf(svalue, format, &p, &r))
+		{
+			sprintf(format, S_INT64_DEC_NOSCALE);
+			if (!sscanf(svalue, format, &r))
+				FQlog(conn, DEBUG1, "problem parsing SQL_INT64 type");
+		}
+
+		/* rounding */
+		if (r >= 5)
+		{
+			if (p < 0) p--; else p++;
+		}
+
+		return p;
+	}
+
+}
+
+static signed int __fill_in_sqlvar_from_input_string(FBconn *conn, FBresult *result, XSQLVAR *var, const char *input_string, bool parse_db_key) {
+	int dtype = (var->sqltype & ~1); /* drop flag bit for now */
+	int len;
+
+	switch(dtype)
+	{
+		case SQL_SHORT:
+		case SQL_LONG:
+			{
+				long result = __parse_short_or_long(conn, var, input_string);
+
+				if (dtype == SQL_SHORT)
+				{
+					var->sqldata = (char *)malloc(sizeof(ISC_SHORT));
+					var->sqllen = sizeof(ISC_SHORT);
+					*(ISC_SHORT *) (var->sqldata) = (ISC_SHORT) result;
+				}
+				else
+				{
+					var->sqldata = (char *)malloc(sizeof(ISC_LONG));
+					var->sqllen = sizeof(ISC_LONG);
+					*(ISC_LONG *) (var->sqldata) = (ISC_LONG) result;
+				}
+
+				break;
+			}
+
+		case SQL_INT64:
+			{
+				var->sqldata = (char *)malloc(sizeof(ISC_INT64));
+				memset(var->sqldata, '\0', sizeof(ISC_INT64));
+				*(ISC_INT64 *) (var->sqldata) = (ISC_INT64) __parse_int64(conn, var, input_string);
+				var->sqllen = sizeof(ISC_INT64);
+
+				break;
+			}
+
+#if defined SQL_INT128
+			/* Firebird 4.0 and later */
+		case SQL_INT128:
+			var->sqldata = (char *)malloc(sizeof(__int128));
+			memset(var->sqldata, '\0', sizeof(__int128));
+			*(__int128 *) (var->sqldata) = __parse_int128(input_string);
+			var->sqllen = sizeof(__int128);
+			break;
+#endif
+		case SQL_FLOAT:
+			var->sqldata = (char *)malloc(sizeof(float));
+			var->sqllen = sizeof(float);
+			*(float *)(var->sqldata) = (float)atof(input_string);
+			break;
+
+		case SQL_DOUBLE:
+			var->sqldata = (char *)malloc(sizeof(double));
+			var->sqllen = sizeof(double);
+			*(double *) (var->sqldata) = atof(input_string);
+			break;
+
+		case SQL_VARYING:
+			var->sqltype = SQL_TEXT; /* need this */
+			len = strlen(input_string);
+
+			var->sqllen = len; /* need this */
+			var->sqldata = (char *)malloc(sizeof(char)*var->sqllen);
+			memcpy(var->sqldata, input_string, len);
+			break;
+
+		case SQL_TEXT:
+
+			/* convert RDB$DB_KEY hex value to raw bytes if requested */
+			if (parse_db_key)
+			{
+				unsigned char *sqlptr;
+				unsigned char *srcptr;
+				unsigned char *srcptr_ix;
+				unsigned char *srcptr_parsed;
+				int ix = 0;
+
+				srcptr = (unsigned char *)_FQdeparseDbKey(input_string);
+
+				srcptr_parsed = (unsigned char *)_FQparseDbKey((char *)srcptr);
+				FQlog(conn, DEBUG1, "srcptr %s", srcptr_parsed);
+				free(srcptr_parsed);
+
+				len = 8;
+				var->sqllen = len;
+				var->sqldata = (char *)malloc(len);
+
+				sqlptr = (unsigned char *)var->sqldata ;
+				srcptr_ix = srcptr;
+
+				for (ix = 0; ix < len; ix++)
+				{
+					*sqlptr++ = *srcptr_ix++;
+				}
+
+				free(srcptr);
+			}
+			else
+			{
+				len = strlen(input_string);
+				var->sqldata = (char *)malloc(sizeof(char) * len);
+				var->sqllen = len;
+				memcpy(var->sqldata, input_string, len);
+			}
+
+			break;
+
+		case SQL_TYPE_TIME:
+#ifdef HAVE_TIMEZONE
+		case SQL_TIME_TZ:
+		case SQL_TIME_TZ_EX:
+#endif
+		case SQL_TIMESTAMP:
+#ifdef HAVE_TIMEZONE
+		case SQL_TIMESTAMP_TZ:
+		case SQL_TIMESTAMP_TZ_EX:
+#endif
+		case SQL_TYPE_DATE:
+			/* Here we coerce the time-related column types to CHAR,
+			 * causing Firebird to use its internal parsing mechanisms
+			 * to interpret the supplied literal
+			 */
+			len = strlen(input_string);
+			/* From dbimp.c: "workaround for date problem (bug #429820)" */
+			var->sqltype = SQL_TEXT;
+			var->sqlsubtype = 0x77;
+			var->sqllen = len;
+			var->sqldata = (char *)malloc(sizeof(char)*len);
+			memcpy(var->sqldata, input_string, len);
+
+			break;
+
+		case SQL_BLOB:
+			{
+				/* must be initialised to 0 */
+				isc_blob_handle blob_handle = 0;
+				char *ptr = (char *)input_string;
+
+				len = strlen(input_string);
+				var->sqldata = (char *)malloc(sizeof(ISC_QUAD));
+				var->sqllen = sizeof(ISC_QUAD);
+
+				isc_create_blob2(
+						conn->status,
+						&conn->db,
+						&conn->trans,
+						&blob_handle,
+						(ISC_QUAD *)var->sqldata,
+						0,		 /* Blob Parameter Buffer length = 0; no filter will be used */
+						NULL	 /* NULL Blob Parameter Buffer, since no filter will be used */
+						);
+				while (ptr < input_string + len)
+				{
+					int seg_len = BLOB_SEGMENT_LEN;
+
+					if (ptr + seg_len > (input_string + len))
+					{
+						seg_len = (input_string + len) - ptr;
+					}
+
+					isc_put_segment(
+							conn->status,
+							&blob_handle,
+							seg_len,
+							ptr);
+
+					ptr += BLOB_SEGMENT_LEN;
+				}
+				isc_close_blob(conn->status, &blob_handle);
+				break;
+			}
+
+#if defined SQL_BOOLEAN
+			/* Firebird 3.0 and later */
+		case SQL_BOOLEAN:
+			var->sqldata = (char *)malloc(sizeof(FB_BOOLEAN));
+			var->sqllen = sizeof(FB_BOOLEAN);
+
+			if (strncasecmp(input_string, "0", 1) == 0)
+				*var->sqldata = FB_FALSE;
+			else if (strncasecmp(input_string, "1", 1) == 0)
+				*var->sqldata = FB_TRUE;
+			else if (strncasecmp(input_string, "false", 5) == 0)
+				*var->sqldata = FB_FALSE;
+			else if (strncasecmp(input_string, "f", 1) == 0)
+				*var->sqldata = FB_FALSE;
+			else if (strncasecmp(input_string, "true", 4) == 0)
+				*var->sqldata = FB_TRUE;
+			else if (strncasecmp(input_string, "t", 1) == 0)
+				*var->sqldata = FB_TRUE;
+			else
+				*var->sqldata = FB_FALSE;
+
+			break;
+#endif
+
+
+		default:
+			{
+				FQExpBufferData error_message_buf;
+
+				initFQExpBuffer(&error_message_buf);
+				appendFQExpBuffer(&error_message_buf,
+						"Unhandled sqlda_in type: %i", dtype);
+
+				_FQsetResultError(conn, result);
+				_FQsaveMessageField(&result, FB_DIAG_DEBUG, error_message_buf.data);
+
+				result->resultStatus = FBRES_FATAL_ERROR;
+
+				_FQexecClearResult(result);
+				termFQExpBuffer(&error_message_buf);
+
+				return -1;
+			}
+	}
+
+}
+
+
+static signed int __fill_in_query_input_parameters(FBconn *conn,
+		FBresult *result,
+		const char * const *paramValues,
+		const int *paramFormats
+		)
 {
 	XSQLVAR		 *var;
 	int			  i;
-
-	ISC_STATUS    retcode;
-	int			  exec_result;
-
-
-	if (*trans == 0L)
-	{
-		FQlog(conn, DEBUG1, "_FQexecParams: starting transaction...");
-		_FQstartTransaction(conn, trans);
-
-		if (conn->autocommit == false)
-			conn->in_user_transaction = true;
-	}
-
-	ISC_STATUS error;
-	error = __allocate_placeholders_for_input_fields(conn, result);
-	if (error)
-	{
-		return result;
-	}
-
-	FQlog(conn, DEBUG1, "_FQexecParams: sqld %i", result->sqlda_in->sqld);
 
 	for (i = 0, var = result->sqlda_in->sqlvar; i < result->sqlda_in->sqld; i++, var++)
 	{
@@ -1855,372 +2207,11 @@ _FQexecParams(FBconn *conn,
 		}
 		else
 		{
-			switch(dtype)
-			{
-				case SQL_SHORT:
-				case SQL_LONG:
-				{
-					char format[64];
-					long p, q, r, result;
-					const char *svalue;
+			bool parse_db_key = paramFormats != NULL && paramFormats[i] == -1;
 
-					p = q = r = (long) 0;
-					svalue = paramValues[i];
-					len = strlen(svalue);
-
-					/* with decimals? */
-					if (var->sqlscale < 0)
-					{
-						/* NUMERIC(?,?) */
-						int	 scale = (int) (pow(10.0, (double) -var->sqlscale));
-						int	 dscale;
-						char *tmp;
-						char *neg;
-
-						FQlog(conn, DEBUG1, "sqlscale < 0; scale is %i", scale);
-
-						sprintf(format, "%%ld.%%%dld%%1ld", -var->sqlscale);
-
-						/* negative -0.x hack */
-						neg = strchr(svalue, '-');
-						if (neg)
-						{
-							svalue = neg + 1;
-							len = strlen(svalue);
-						}
-
-						if (!sscanf(svalue, format, &p, &q, &r))
-						{
-							/* here we handle values such as .78 passed as string */
-							sprintf(format, ".%%%dld%%1ld", -var->sqlscale);
-							if (!sscanf(svalue, format, &q, &r) )
-								FQlog(conn, DEBUG1, "problem parsing SQL_SHORT/SQL_LONG type");
-						}
-
-						/* Round up if r is 5 or greater */
-						if (r >= 5)
-						{
-							q++;			/* round q up by one */
-							p += q / scale; /* round p up by one if q overflows */
-							q %= scale;		/* modulus if q overflows */
-						}
-
-						/* decimal scaling */
-						tmp	   = strchr(svalue, '.');
-						dscale = (tmp)
-							? -var->sqlscale - (len - (int) (tmp - svalue)) + 1
-							: 0;
-
-						if (dscale < 0) dscale = 0;
-
-						/* final result */
-						result = (long) (p * scale + q * (int) (pow(10.0, (double) dscale))) * (neg ? -1 : 1);
-						FQlog(conn, DEBUG1, "SQL_SHORT/LONG: decimal result is %li", result);
-					}
-					else
-					{
-						/* numeric(?,0): scan for one decimal and do rounding*/
-
-						sprintf(format, "%%ld.%%1ld");
-
-						if (!sscanf(svalue, format, &p, &r))
-						{
-							sprintf(format, ".%%1ld");
-							if (!sscanf(svalue, format, &r))
-								FQlog(conn, DEBUG1, "problem parsing SQL_SHORT/SQL_LONG type");
-						}
-
-						/* rounding */
-						if (r >= 5)
-						{
-							if (p < 0) p--; else p++;
-						}
-
-						result = (long) p;
-					}
-
-					if (dtype == SQL_SHORT)
-					{
-						var->sqldata = (char *)malloc(sizeof(ISC_SHORT));
-						var->sqllen = sizeof(ISC_SHORT);
-						*(ISC_SHORT *) (var->sqldata) = (ISC_SHORT) result;
-					}
-					else
-					{
-						var->sqldata = (char *)malloc(sizeof(ISC_LONG));
-						var->sqllen = sizeof(ISC_LONG);
-						*(ISC_LONG *) (var->sqldata) = (ISC_LONG) result;
-					}
-
-					break;
-				}
-
-				case SQL_INT64:
-				{
-					const char	   *svalue;
-					char	 format[64];
-					ISC_INT64 p, q, r;
-
-					FQlog(conn, DEBUG1, "INT64");
-					var->sqldata = (char *)malloc(sizeof(ISC_INT64));
-					memset(var->sqldata, '\0', sizeof(ISC_INT64));
-
-					p = q = r = (ISC_INT64) 0;
-					svalue = paramValues[i];
-					len = strlen(svalue);
-
-					/* with decimals? */
-					if (var->sqlscale < 0)
-					{
-						/* numeric(?,?) */
-						int	 scale = (int) (pow(10.0, (double) -var->sqlscale));
-						int	 dscale;
-						char *tmp;
-						char *neg;
-
-						sprintf(format, S_INT64_FULL, -var->sqlscale);
-
-						/* negative -0.x hack */
-						neg = strchr(svalue, '-');
-						if (neg)
-						{
-							svalue = neg + 1;
-							len = strlen(svalue);
-						}
-
-						if (!sscanf(svalue, format, &p, &q, &r))
-						{
-							/* here we handle values such as .78 passed as string */
-							sprintf(format, S_INT64_DEC_FULL, -var->sqlscale);
-							if (!sscanf(svalue, format, &q, &r))
-								FQlog(conn, DEBUG1, "problem parsing SQL_INT64 type");
-						}
-
-						/* Round up if r is 5 or greater */
-						if (r >= 5)
-						{
-							q++;			/* round q up by one */
-							p += q / scale; /* round p up by one if q overflows */
-							q %= scale;		/* modulus if q overflows */
-						}
-
-						/* decimal scaling */
-						tmp	   = strchr(svalue, '.');
-						dscale = (tmp)
-							? -var->sqlscale - (len - (int) (tmp - svalue)) + 1
-							: 0;
-
-						if (dscale < 0)
-							dscale = 0;
-
-						*(ISC_INT64 *) (var->sqldata) = (ISC_INT64) (p * scale + q * (int) (pow(10.0, (double) dscale))) * (neg? -1: 1);
-						var->sqllen = sizeof(ISC_INT64);
-					}
-					else
-					{
-						/* NUMERIC(?,0): scan for one decimal and do rounding */
-
-						sprintf(format, S_INT64_NOSCALE);
-
-						if (!sscanf(svalue, format, &p, &r))
-						{
-							sprintf(format, S_INT64_DEC_NOSCALE);
-							if (!sscanf(svalue, format, &r))
-								FQlog(conn, DEBUG1, "problem parsing SQL_INT64 type");
-						}
-
-						/* rounding */
-						if (r >= 5)
-						{
-							if (p < 0) p--; else p++;
-						}
-
-						*(ISC_INT64 *) (var->sqldata) = (ISC_INT64) p;
-						var->sqllen = sizeof(ISC_INT64);
-					}
-
-					break;
-				}
-
-#if defined SQL_INT128
-				/* Firebird 4.0 and later */
-				case SQL_INT128:
-					var->sqldata = (char *)malloc(sizeof(__int128));
-					memset(var->sqldata, '\0', sizeof(__int128));
-					*(__int128 *) (var->sqldata) = convert_int128(paramValues[i]);
-					var->sqllen = sizeof(__int128);
-					break;
-#endif
-				case SQL_FLOAT:
-					var->sqldata = (char *)malloc(sizeof(float));
-					var->sqllen = sizeof(float);
-					*(float *)(var->sqldata) = (float)atof(paramValues[i]);
-					break;
-
-				case SQL_DOUBLE:
-					var->sqldata = (char *)malloc(sizeof(double));
-					var->sqllen = sizeof(double);
-					*(double *) (var->sqldata) = atof(paramValues[i]);
-					break;
-
-				case SQL_VARYING:
-					var->sqltype = SQL_TEXT; /* need this */
-					len = strlen(paramValues[i]);
-
-					var->sqllen = len; /* need this */
-					var->sqldata = (char *)malloc(sizeof(char)*var->sqllen);
-					memcpy(var->sqldata, paramValues[i], len);
-					break;
-
-				case SQL_TEXT:
-
-					/* convert RDB$DB_KEY hex value to raw bytes if requested */
-					if (paramFormats != NULL && paramFormats[i] == -1)
-					{
-						unsigned char *sqlptr;
-						unsigned char *srcptr;
-						unsigned char *srcptr_ix;
-						unsigned char *srcptr_parsed;
-						int ix = 0;
-
-						srcptr = (unsigned char *)_FQdeparseDbKey(paramValues[i]);
-
-						srcptr_parsed = (unsigned char *)_FQparseDbKey((char *)srcptr);
-						FQlog(conn, DEBUG1, "srcptr %s", srcptr_parsed);
-						free(srcptr_parsed);
-
-						len = 8;
-						var->sqllen = len;
-						var->sqldata = (char *)malloc(len);
-
-						sqlptr = (unsigned char *)var->sqldata ;
-						srcptr_ix = srcptr;
-
-						for (ix = 0; ix < len; ix++)
-						{
-							*sqlptr++ = *srcptr_ix++;
-						}
-
-						free(srcptr);
-					}
-					else
-					{
-						len = strlen(paramValues[i]);
-						var->sqldata = (char *)malloc(sizeof(char) * len);
-						var->sqllen = len;
-						memcpy(var->sqldata, paramValues[i], len);
-					}
-
-					break;
-
-				case SQL_TYPE_TIME:
-#ifdef HAVE_TIMEZONE
-				case SQL_TIME_TZ:
-				case SQL_TIME_TZ_EX:
-#endif
-				case SQL_TIMESTAMP:
-#ifdef HAVE_TIMEZONE
-				case SQL_TIMESTAMP_TZ:
-				case SQL_TIMESTAMP_TZ_EX:
-#endif
-				case SQL_TYPE_DATE:
-					/* Here we coerce the time-related column types to CHAR,
-					 * causing Firebird to use its internal parsing mechanisms
-					 * to interpret the supplied literal
-					 */
-					len = strlen(paramValues[i]);
-					/* From dbimp.c: "workaround for date problem (bug #429820)" */
-					var->sqltype = SQL_TEXT;
-					var->sqlsubtype = 0x77;
-					var->sqllen = len;
-					var->sqldata = (char *)malloc(sizeof(char)*len);
-					memcpy(var->sqldata, paramValues[i], len);
-
-					break;
-
-				case SQL_BLOB:
-				{
-					/* must be initialised to 0 */
-					isc_blob_handle blob_handle = 0;
-					char *ptr = (char *)paramValues[i];
-
-					len = strlen(paramValues[i]);
-					var->sqldata = (char *)malloc(sizeof(ISC_QUAD));
-					var->sqllen = sizeof(ISC_QUAD);
-
-					isc_create_blob2(
-						conn->status,
-						&conn->db,
-						&conn->trans,
-						&blob_handle,
-						(ISC_QUAD *)var->sqldata,
-						0,		 /* Blob Parameter Buffer length = 0; no filter will be used */
-						NULL	 /* NULL Blob Parameter Buffer, since no filter will be used */
-						);
-					while (ptr < paramValues[i] + len)
-					{
-						int seg_len = BLOB_SEGMENT_LEN;
-
-						if (ptr + seg_len > (paramValues[i] + len))
-						{
-							seg_len = (paramValues[i] + len) - ptr;
-						}
-
-						isc_put_segment(
-							conn->status,
-							&blob_handle,
-							seg_len,
-							ptr);
-
-						ptr += BLOB_SEGMENT_LEN;
-					}
-					isc_close_blob(conn->status, &blob_handle);
-					break;
-				}
-
-#if defined SQL_BOOLEAN
-				/* Firebird 3.0 and later */
-				case SQL_BOOLEAN:
-					var->sqldata = (char *)malloc(sizeof(FB_BOOLEAN));
-					var->sqllen = sizeof(FB_BOOLEAN);
-
-					if (strncasecmp(paramValues[i], "0", 1) == 0)
-						*var->sqldata = FB_FALSE;
-					else if (strncasecmp(paramValues[i], "1", 1) == 0)
-						*var->sqldata = FB_TRUE;
-					else if (strncasecmp(paramValues[i], "false", 5) == 0)
-						*var->sqldata = FB_FALSE;
-					else if (strncasecmp(paramValues[i], "f", 1) == 0)
-						*var->sqldata = FB_FALSE;
-					else if (strncasecmp(paramValues[i], "true", 4) == 0)
-						*var->sqldata = FB_TRUE;
-					else if (strncasecmp(paramValues[i], "t", 1) == 0)
-						*var->sqldata = FB_TRUE;
-					else
-						*var->sqldata = FB_FALSE;
-
-					break;
-#endif
-
-
-				default:
-				{
-					FQExpBufferData error_message_buf;
-
-					initFQExpBuffer(&error_message_buf);
-					appendFQExpBuffer(&error_message_buf,
-									  "Unhandled sqlda_in type: %i", dtype);
-
-					_FQsetResultError(conn, result);
-					_FQsaveMessageField(&result, FB_DIAG_DEBUG, error_message_buf.data);
-
-					result->resultStatus = FBRES_FATAL_ERROR;
-
-					_FQexecClearResult(result);
-					termFQExpBuffer(&error_message_buf);
-					return result;
-				}
-			}
+			int error = __fill_in_sqlvar_from_input_string(conn, result, var, paramValues[i], parse_db_key);
+			if (error)
+				return error;
 		}
 
 		if (var->sqltype & 1)
@@ -2230,6 +2221,57 @@ _FQexecParams(FBconn *conn,
 			var->sqlind = (short *)malloc(sizeof(short));
 			*(short *)var->sqlind = (paramValues[i] == NULL) ? -1 : 0;
 		}
+	}
+}
+
+/**
+ * _FQexecParams()
+ *
+ * Actually execute the parameterized query. See above for parameter
+ * details.
+ *
+ * Be warned, this was a pain to kludge together (oh Firebird C API, how
+ * I love your cryptic minimalism) and is in dire need of refactoring.
+ * But it works. Mostly.
+ */
+static FBresult *
+_FQexecParams(FBconn *conn,
+			  isc_tr_handle *trans,
+			  FBresult	 *result,
+			  bool free_result_stmt_handle,
+			  int nParams,
+			  const char * const *paramValues,
+			  const int *paramLengths,
+			  const int *paramFormats,
+			  int resultFormat
+	)
+{
+	ISC_STATUS    retcode;
+	int			  exec_result;
+
+
+	if (*trans == 0L)
+	{
+		FQlog(conn, DEBUG1, "_FQexecParams: starting transaction...");
+		_FQstartTransaction(conn, trans);
+
+		if (conn->autocommit == false)
+			conn->in_user_transaction = true;
+	}
+
+	ISC_STATUS error;
+	error = __allocate_placeholders_for_input_fields(conn, result);
+	if (error)
+	{
+		return result;
+	}
+
+	FQlog(conn, DEBUG1, "_FQexecParams: sqld %i", result->sqlda_in->sqld);
+
+	error = __fill_in_query_input_parameters(conn, result, paramValues, paramFormats);
+	if(error)
+	{
+		return result;
 	}
 
 	error = __allocate_buffers_to_receive_query_result_row(conn, result);
@@ -4729,7 +4771,7 @@ format_int128(__int128 val, char *dst)
 }
 
 static __int128
-convert_int128(const char *s)
+__parse_int128(const char *s)
 {
     const char *p = s;
     int neg = 0;
