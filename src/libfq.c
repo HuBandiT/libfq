@@ -92,7 +92,7 @@ static void _FQexecClearResult(FBresult *result);
 static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle);
 static void _FQexecClearSQLDA(XSQLDA *sqlda);
 static void _FQexecFillTuplesArray(FBresult *result);
-static void __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result);
+static ISC_STATUS __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result);
 static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars);
 static ISC_LONG _FQexecParseStatementType(char *info_buffer);
 
@@ -1121,6 +1121,38 @@ static void __allocate_buffers_for_XSQLVARs_of_XSQLDA(FBconn *conn, FBresult *re
 }
 
 
+static ISC_STATUS ___perform_describe(FBconn *conn, FBresult *result, bool for_input_parameters, XSQLDA *sqlda) {
+	ISC_STATUS status;
+
+	if (for_input_parameters)
+	{
+		status = isc_dsql_describe_bind(conn->status, &result->stmt_handle, SQL_DIALECT_V6, sqlda);
+	}
+	else
+	{
+		status = isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, sqlda);
+	}
+
+	if (status)
+	{
+		if (for_input_parameters)
+		{
+			_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_describe_bind");
+		}
+		else
+		{
+			_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_describe");
+		}
+
+		_FQsetResultError(conn, result);
+
+		result->resultStatus = FBRES_FATAL_ERROR;
+		_FQexecClearResult(result);
+	}
+
+	return status;
+}
+
 static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars) {
 	const int size = XSQLDA_LENGTH(n_sqlvars);
 	XSQLDA *new_sqlda = (XSQLDA *) malloc(size);
@@ -1133,6 +1165,54 @@ static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars) {
 
 	return new_sqlda;
 }
+
+
+static ISC_STATUS __allocate_placeholders_for_fields(FBconn *conn, FBresult *result, bool for_input_parameters) {
+	XSQLDA probing_sqlda;
+
+	const int n_sqlvars_included_in_struct_definition = sizeof(probing_sqlda.sqlvar) / sizeof(probing_sqlda.sqlvar[0]);
+
+	probing_sqlda.version = SQLDA_VERSION1;
+	probing_sqlda.sqln = n_sqlvars_included_in_struct_definition;
+
+	ISC_STATUS status;
+
+	status = ___perform_describe(conn, result, for_input_parameters, &probing_sqlda);
+	if (status)
+		return status;
+
+	const ISC_SHORT n_sqlvars = MAX( probing_sqlda.sqld, n_sqlvars_included_in_struct_definition );
+
+	XSQLDA *new_sqlda = ___allocate_XSQLDA(n_sqlvars);
+
+	status = ___perform_describe(conn, result, for_input_parameters, new_sqlda);
+
+	if (status)
+	{
+		free(new_sqlda);
+		return status;
+	}
+
+	if (for_input_parameters)
+	{
+		_FQexecClearSQLDA(result->sqlda_in);
+		result->sqlda_in = new_sqlda;
+	}
+	else
+	{
+		_FQexecClearSQLDA(result->sqlda_out);
+		result->sqlda_out = new_sqlda;
+	}
+}
+
+static ISC_STATUS __allocate_placeholders_for_output_fields(FBconn *conn, FBresult *result) {
+	__allocate_placeholders_for_fields(conn, result, false);
+}
+
+static ISC_STATUS __allocate_placeholders_for_input_fields(FBconn *conn, FBresult *result) {
+	__allocate_placeholders_for_fields(conn, result, true);
+}
+
 /**
  * __allocate_buffers_to_receive_query_result_row()
  *
@@ -1146,9 +1226,15 @@ static XSQLDA *___allocate_XSQLDA(ISC_SHORT n_sqlvars) {
  * and NULL status indicator to a location in that buffer, but that is
  * somewhat tricky to get right.
  */
-static void
+static ISC_STATUS
 __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result)
 {
+	ISC_STATUS status;
+	status = __allocate_placeholders_for_output_fields(conn, result);
+
+	if (status)
+		return status;
+
 	__allocate_buffers_for_XSQLVARs_of_XSQLDA(conn, result, result->sqlda_out);
 }
 
@@ -1476,42 +1562,11 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 			conn->in_user_transaction = true;
 	}
 
-	if (isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
-	{
-		_FQsetResultError(conn, result);
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_describe");
-
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQexecClearResult(result);
+	error = __allocate_buffers_to_receive_query_result_row(conn, result);
+	if (error)
 		return result;
-	}
 
-
-
-	/* Expand sqlda to required number of columns */
 	result->ncols = result->sqlda_out->sqld;
-
-	if (result->sqlda_out->sqln < result->ncols) {
-
-		free(result->sqlda_out);
-		result->sqlda_out = ___allocate_XSQLDA(result->ncols);
-
-		if (isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
-		{
-			_FQsetResultError(conn, result);
-			_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_describe");
-
-			result->resultStatus = FBRES_FATAL_ERROR;
-
-			_FQexecClearResult(result);
-			return result;
-		}
-
-		result->ncols = result->sqlda_out->sqld;
-	}
-
-	__allocate_buffers_to_receive_query_result_row(conn, result);
 
 	if (isc_dsql_execute(conn->status, trans, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
 	{
@@ -1783,18 +1838,6 @@ _FQexecParams(FBconn *conn,
 	int			  exec_result;
 
 
-	if (isc_dsql_describe_bind(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_in))
-	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_describe_bind");
-		_FQsetResultError(conn, result);
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQrollbackTransaction(conn, trans);
-
-		_FQexecClearResult(result);
-		return result;
-	}
-
 	if (*trans == 0L)
 	{
 		FQlog(conn, DEBUG1, "_FQexecParams: starting transaction...");
@@ -1804,18 +1847,11 @@ _FQexecParams(FBconn *conn,
 			conn->in_user_transaction = true;
 	}
 
-	/*
-	 * Expand the input XSQLDA, if required.
-	 */
-	if (result->sqlda_in->sqld > result->sqlda_in->sqln)
+	ISC_STATUS error;
+	error = __allocate_placeholders_for_input_fields(conn, result);
+	if (error)
 	{
-		int sqln = result->sqlda_in->sqld;
-
-		free(result->sqlda_in);
-		result->sqlda_in = ___allocate_XSQLDA(sqln);
-		isc_dsql_describe_bind(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_in);
-
-		FQlog(conn, DEBUG1, "%lu; sqln now %i %i", XSQLDA_LENGTH(sqln), sqln, result->sqlda_in->sqld );
+		return result;
 	}
 
 	FQlog(conn, DEBUG1, "_FQexecParams: sqld %i", result->sqlda_in->sqld);
@@ -2239,17 +2275,12 @@ _FQexecParams(FBconn *conn,
 		}
 	}
 
-	if (isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
+	error = __allocate_buffers_to_receive_query_result_row(conn, result);
+	if(error)
 	{
-		_FQsetResultError(conn, result);
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_describe");
-
-		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQexecClearResult(result);
 		return result;
 	}
 
-	/* Expand output sqlda to required number of columns */
 	result->ncols = result->sqlda_out->sqld;
 
 	FQlog(conn, DEBUG2, "_FQexecParams(): ncols is %i", result->ncols);
@@ -2289,17 +2320,6 @@ _FQexecParams(FBconn *conn,
 
 		return result;
 	}
-
-	if (result->sqlda_out->sqln < result->ncols) {
-		free(result->sqlda_out);
-		result->sqlda_out = ___allocate_XSQLDA(result->ncols);
-
-		isc_dsql_describe(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out);
-
-		result->ncols = result->sqlda_out->sqld;
-	}
-
-	__allocate_buffers_to_receive_query_result_row(conn, result);
 
 	/* "isc_info_sql_stmt_exec_procedure" also covers "RETURNING ..." statements */
 	if (result->statement_type == isc_info_sql_stmt_exec_procedure)
