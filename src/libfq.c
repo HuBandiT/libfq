@@ -1177,7 +1177,7 @@ static ISC_STATUS __allocate_placeholders_for_output_fields(FBconn *conn, FBresu
 	__allocate_placeholders_for_fields(conn, result, false);
 }
 
-static ISC_STATUS __allocate_placeholders_for_input_fields(FBconn *conn, FBresult *result) {
+static ISC_STATUS __allocate_placeholders_for_query_input_parameters(FBconn *conn, FBresult *result) {
 	__allocate_placeholders_for_fields(conn, result, true);
 }
 
@@ -2260,7 +2260,7 @@ _FQexecParams(FBconn *conn,
 	}
 
 	ISC_STATUS error;
-	error = __allocate_placeholders_for_input_fields(conn, result);
+	error = __allocate_placeholders_for_query_input_parameters(conn, result);
 	if (error)
 	{
 		return result;
