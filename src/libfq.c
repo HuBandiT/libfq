@@ -4388,9 +4388,6 @@ FQclear(FBresult *result)
 
 				FQresTuple *tuple_next = tuple_ptr->next;
 
-				if (!tuple_next)
-					break;
-
 				for (j = 0; j < result->ncols; j++)
 				{
 
@@ -4404,6 +4401,9 @@ FQclear(FBresult *result)
 
 				free(tuple_ptr->values);
 				free(tuple_ptr);
+
+				if (!tuple_next)
+					break;
 
 				tuple_ptr = tuple_next;
 			}
