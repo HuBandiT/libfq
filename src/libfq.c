@@ -1245,6 +1245,25 @@ static ISC_STATUS __prepare_statement(FBconn *conn, FBresult *result, void *tran
 	return status;
 }
 
+
+static ISC_STATUS __determine_sql_statement_type_for_result(FBconn *conn, FBresult *result) {
+	static char	  stmt_info[] = { isc_info_sql_stmt_type };
+	char		  info_buffer[20];
+
+	ISC_STATUS status = isc_dsql_sql_info(conn->status, &result->stmt_handle, sizeof (stmt_info), stmt_info, sizeof (info_buffer), info_buffer);
+
+	if (status)
+	{
+		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_sql_info");
+		_FQsetResultError(conn, result);
+		result->resultStatus = FBRES_FATAL_ERROR;
+		_FQexecClearResult(result);
+
+		return status;
+	}
+
+	result->statement_type = _FQexecParseStatementType((char *) info_buffer);
+}
 /**
  * _FQexec()
  *
@@ -1255,10 +1274,6 @@ static FBresult *
 _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 {
 	FBresult	  *result;
-
-	static char	  stmt_info[] = { isc_info_sql_stmt_type };
-	char		  info_buffer[20];
-	int			  statement_type;
 
 	int			  num_rows = 0;
 	ISC_STATUS    retcode;
@@ -1301,26 +1316,18 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	}
 
 	/* Determine the statement's type */
-	if (isc_dsql_sql_info(conn->status, &result->stmt_handle, sizeof (stmt_info), stmt_info, sizeof (info_buffer), info_buffer))
+	error = __determine_sql_statement_type_for_result(conn, result);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_sql_info");
-
-		_FQsetResultError(conn, result);
-
 		_FQrollbackTransaction(conn, trans);
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQexecClearResult(result);
 		return result;
 	}
-
-	statement_type = _FQexecParseStatementType((char *) info_buffer);
 
 	/* Query will not return rows */
 	if (!result->sqlda_out->sqld)
 	{
 		/* Handle explicit SET TRANSACTION */
-		if (statement_type == isc_info_sql_stmt_start_trans)
+		if (result->statement_type == isc_info_sql_stmt_start_trans)
 		{
 			if (*trans != 0L)
 			{
@@ -1339,7 +1346,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		}
 
 		/* Handle explicit COMMIT */
-		if (statement_type == isc_info_sql_stmt_commit)
+		if (result->statement_type == isc_info_sql_stmt_commit)
 		{
 			 if (*trans == 0L)
 			{
@@ -1362,7 +1369,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		}
 
 		/* Handle explit ROLLBACK */
-		if (statement_type == isc_info_sql_stmt_rollback)
+		if (result->statement_type == isc_info_sql_stmt_rollback)
 		{
 			if (*trans == 0L)
 			{
@@ -1384,7 +1391,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		}
 
 		/* Handle DDL statement */
-		if (statement_type == isc_info_sql_stmt_ddl)
+		if (result->statement_type == isc_info_sql_stmt_ddl)
 		{
 			FQlog(conn, DEBUG1, "statement_type is DDL");
 
@@ -1633,8 +1640,6 @@ FQprepare(FBconn *conn,
 	FBresult	 *result;
 	bool		  temp_trans = false;
 	isc_tr_handle *trans = &conn->trans;
-	char		  info_buffer[20];
-	static char	  stmt_info[] = { isc_info_sql_stmt_type };
 
 	result = _FQinitResult(true);
 
@@ -1670,20 +1675,12 @@ FQprepare(FBconn *conn,
 	}
 
 	/* Determine the statement's type */
-	if (isc_dsql_sql_info(conn->status, &result->stmt_handle, sizeof (stmt_info), stmt_info, sizeof (info_buffer), info_buffer))
+	error = __determine_sql_statement_type_for_result(conn, result);
+	if (error)
 	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_sql_info");
-
-		_FQsetResultError(conn, result);
-
 		_FQrollbackTransaction(conn, trans);
-		result->resultStatus = FBRES_FATAL_ERROR;
-
-		_FQexecClearResult(result);
 		return result;
 	}
-
-	result->statement_type = _FQexecParseStatementType((char *) info_buffer);
 
 	FQlog(conn, DEBUG1, "statement_type: %i", result->statement_type);
 
