@@ -1293,7 +1293,6 @@ static ISC_STATUS __determine_sql_statement_type_for_result(FBconn *conn, FBresu
 }
 
 
-
 /**
  * _FQexec()
  *
