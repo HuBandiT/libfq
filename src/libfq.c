@@ -1238,8 +1238,28 @@ static ISC_STATUS __allocate_statement(FBconn *conn, FBresult *result, bool vers
 }
 
 
-static ISC_STATUS __prepare_statement(FBconn *conn, FBresult *result, void *trans, const char *stmt, XSQLDA *out) {
+static ISC_STATUS __prepare_statement(FBconn *conn, FBresult *result, isc_tr_handle *trans, const char *stmt, XSQLDA *out) {
+
+	/* An active transaction is required to prepare the statement -
+	 * if no transaction handle was provided by the caller,
+	 * start a temporary transaction
+	 */
+
+	bool		  temp_trans = false;
+
+	if (*trans == 0L)
+	{
+		_FQstartTransaction(conn, trans);
+		temp_trans = true;
+	}
+
 	ISC_STATUS status = isc_dsql_prepare(conn->status, trans, &result->stmt_handle, 0, stmt, SQL_DIALECT_V6, out);
+
+	/* If a temporary transaction was previously created, roll it back; also roll back if an error happened */
+	if (temp_trans || status)
+	{
+		_FQrollbackTransaction(conn, trans);
+	}
 
 	if (status)
 	{
@@ -1271,6 +1291,9 @@ static ISC_STATUS __determine_sql_statement_type_for_result(FBconn *conn, FBresu
 
 	result->statement_type = _FQexecParseStatementType((char *) info_buffer);
 }
+
+
+
 /**
  * _FQexec()
  *
@@ -1297,30 +1320,10 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		return result;
 	}
 
-	/* An active transaction is required to prepare the statement -
-	 * if no transaction handle was provided by the caller,
-	 * start a temporary transaction
-	 */
-	if (*trans == 0L)
-	{
-		_FQstartTransaction(conn, trans);
-		temp_trans = true;
-	}
-
 	/* Prepare the statement. */
 	error = __prepare_statement(conn, result, trans, stmt, result->sqlda_out);
 	if (error)
-	{
-		_FQrollbackTransaction(conn, trans);
 		return result;
-	}
-
-	/* If a temporary transaction was previously created, roll it back */
-	if (temp_trans == true)
-	{
-		_FQrollbackTransaction(conn, trans);
-		temp_trans = false;
-	}
 
 	/* Determine the statement's type */
 	error = __determine_sql_statement_type_for_result(conn, result);
@@ -1641,7 +1644,6 @@ FQprepare(FBconn *conn,
 		  const int *paramTypes)
 {
 	FBresult	 *result;
-	bool		  temp_trans = false;
 	isc_tr_handle *trans = &conn->trans;
 
 	result = _FQinitResult(true);
@@ -1653,29 +1655,10 @@ FQprepare(FBconn *conn,
 	if (error)
 		return result;
 
-	/* An active transaction is required to prepare the statement -
-	 * if no transaction handle was provided by the caller,
-	 * start a temporary transaction
-	 */
-	if (*trans == 0L)
-	{
-		_FQstartTransaction(conn, trans);
-		temp_trans = true;
-	}
-
 	/* Prepare the statement. */
 	error = __prepare_statement(conn, result, trans, stmt, NULL);
 	if (error)
-	{
-		_FQrollbackTransaction(conn, trans);
 		return result;
-	}
-
-	if (temp_trans == true)
-	{
-		_FQrollbackTransaction(conn, trans);
-		temp_trans = false;
-	}
 
 	/* Determine the statement's type */
 	error = __determine_sql_statement_type_for_result(conn, result);
@@ -4496,7 +4479,7 @@ _FQexplainStatement(FBconn *conn, const char *stmt, char plan_type)
 		return NULL;
 	}
 
-  error = __prepare_statement(conn, result, &conn->trans, stmt, result->sqlda_out);
+	error = __prepare_statement(conn, result, &conn->trans, stmt, result->sqlda_out);
 	if (error)
 	{
 		FQclear(result);
