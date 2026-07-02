@@ -1286,8 +1286,6 @@ static ISC_STATUS __allocate_statement(FBconn *conn, FBresult *result, bool vers
 		result->resultStatus = FBRES_FATAL_ERROR;
 		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_allocate_statement");
 		_FQsetResultError(conn, result);
-
-		_FQexecClearResult(result);
 	}
 
 	return status;
@@ -1322,7 +1320,6 @@ static ISC_STATUS __prepare_statement(FBconn *conn, FBresult *result, isc_tr_han
 		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_prepare");
 		_FQsetResultError(conn, result);
 		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQexecClearResult(result);
 	}
 
 	return status;
@@ -1340,7 +1337,6 @@ static ISC_STATUS __determine_sql_statement_type_for_result(FBconn *conn, FBresu
 		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "error - isc_dsql_sql_info");
 		_FQsetResultError(conn, result);
 		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQexecClearResult(result);
 
 		return status;
 	}
@@ -1406,7 +1402,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 				result->resultStatus = FBRES_TRANSACTION_START;
 			}
 
-			_FQexecClearResult(result);
 			return result;
 		}
 
@@ -1429,7 +1424,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 			 if (conn->in_user_transaction == true)
 				 conn->in_user_transaction = false;
 
-			_FQexecClearResult(result);
 			return result;
 		}
 
@@ -1451,7 +1445,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 			 * command is passed to _FQexec */
 			if (conn->in_user_transaction == true)
 				conn->in_user_transaction = false;
-			_FQexecClearResult(result);
+
 			return result;
 		}
 
@@ -1475,7 +1469,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 
 				result->resultStatus = FBRES_FATAL_ERROR;
 
-				_FQexecClearResult(result);
 				return result;
 			}
 
@@ -1486,7 +1479,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 
 			result->resultStatus = FBRES_COMMAND_OK;
 
-			_FQexecClearResult(result);
 			return result;
 		}
 
@@ -1506,7 +1498,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 			_FQsetResultError(conn, result);
 
 			result->resultStatus = FBRES_FATAL_ERROR;
-			_FQexecClearResult(result);
 			return result;
 		}
 
@@ -1516,7 +1507,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		}
 
 		result->resultStatus = FBRES_COMMAND_OK;
-		_FQexecClearResult(result);
 		return result;
 	}
 
@@ -1712,7 +1702,6 @@ FQprepare(FBconn *conn,
 			_FQrollbackTransaction(conn, trans);
 			result->resultStatus = FBRES_FATAL_ERROR;
 
-			_FQexecClearResult(result);
 			return result;
 	}
 
