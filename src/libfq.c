@@ -1548,8 +1548,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	result->tuple_first = NULL;
 	result->tuple_last = NULL;
 
-	result->header = malloc(sizeof(FQresTupleAttDesc *) * result->ncols);
-
 	while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
 	{
 		_FQstoreResult(result, conn, num_rows);
@@ -2481,6 +2479,71 @@ _FQexecParams(FBconn *conn,
 	return result;
 }
 
+
+static void ___fill_in_FQresTupleAttDesc_from_sqlvar(FBconn *conn, FQresTupleAttDesc *desc, XSQLVAR *var) {
+	desc->desc_len = var->sqlname_length;
+	desc->desc = (char *)malloc(desc->desc_len + 1);
+	memcpy(desc->desc, var->sqlname, desc->desc_len + 1);
+	desc->desc_dsplen = FQdspstrlen(desc->desc, FQclientEncodingId(conn));
+
+	if (var->aliasname_length == var->sqlname_length
+			&& strncmp(var->aliasname, var->sqlname, var->aliasname_length ) == 0)
+	{
+		desc->alias_len = 0;
+		desc->alias = NULL;
+	}
+	else
+	{
+		desc->alias_len = var->aliasname_length;
+		desc->alias = (char *)malloc(desc->alias_len + 1);
+		memcpy(desc->alias, var->aliasname, desc->alias_len + 1);
+		desc->alias_dsplen = FQdspstrlen(desc->alias, FQclientEncodingId(conn));
+	}
+
+	/* store table name, if set */
+	if (var->relname_length)
+	{
+		desc->relname_len = var->relname_length;
+		desc->relname = (char *)malloc(desc->relname_len + 1);
+		memset(desc->relname, '\0', desc->relname_len + 1);
+		strncpy(desc->relname, var->relname, desc->relname_len);
+	}
+	else
+	{
+		desc->relname_len = 0;
+		desc->relname = NULL;
+	}
+
+	desc->att_max_len = 0;
+	desc->att_max_line_len = 0;
+
+	/* Firebird returns RDB$DB_KEY as "DB_KEY" - set the pseudo-datatype */
+	if (strncmp(desc->desc, "DB_KEY", 6) == 0 && strlen(desc->desc) == 6)
+		desc->type = SQL_DB_KEY;
+	else
+		desc->type = var->sqltype & ~1;
+
+	desc->has_null = false;
+}
+
+
+static void __compute_result_header_from_sqlda_out(FBresult *result, FBconn *conn) {
+	int i;
+
+	result->header = malloc(sizeof(FQresTupleAttDesc *) * result->ncols);
+
+	for (i = 0; i < result->ncols; i++)
+	{
+		FQresTupleAttDesc *desc = (FQresTupleAttDesc *)malloc(sizeof(FQresTupleAttDesc));
+		XSQLVAR *var1 = &result->sqlda_out->sqlvar[i];
+
+		___fill_in_FQresTupleAttDesc_from_sqlvar(conn, desc, var1);
+
+		result->header[i] = desc;
+	}
+}
+
+
 static void
 _FQstoreResult(FBresult *result, FBconn *conn, int num_rows)
 {
@@ -2495,56 +2558,7 @@ _FQstoreResult(FBresult *result, FBconn *conn, int num_rows)
 	/* store header information */
 	if (num_rows == 0)
 	{
-		for (i = 0; i < result->ncols; i++)
-		{
-			FQresTupleAttDesc *desc = (FQresTupleAttDesc *)malloc(sizeof(FQresTupleAttDesc));
-			XSQLVAR *var1 = &result->sqlda_out->sqlvar[i];
-
-			desc->desc_len = var1->sqlname_length;
-			desc->desc = (char *)malloc(desc->desc_len + 1);
-			memcpy(desc->desc, var1->sqlname, desc->desc_len + 1);
-			desc->desc_dsplen = FQdspstrlen(desc->desc, FQclientEncodingId(conn));
-
-			if (var1->aliasname_length == var1->sqlname_length
-				&& strncmp(var1->aliasname, var1->sqlname, var1->aliasname_length ) == 0)
-			{
-				desc->alias_len = 0;
-				desc->alias = NULL;
-			}
-			else
-			{
-				desc->alias_len = var1->aliasname_length;
-				desc->alias = (char *)malloc(desc->alias_len + 1);
-				memcpy(desc->alias, var1->aliasname, desc->alias_len + 1);
-				desc->alias_dsplen = FQdspstrlen(desc->alias, FQclientEncodingId(conn));
-			}
-
-			/* store table name, if set */
-			if (var1->relname_length)
-			{
-				desc->relname_len = var1->relname_length;
-				desc->relname = (char *)malloc(desc->relname_len + 1);
-				memset(desc->relname, '\0', desc->relname_len + 1);
-				strncpy(desc->relname, var1->relname, desc->relname_len);
-			}
-			else
-			{
-				desc->relname_len = 0;
-				desc->relname = NULL;
-			}
-
-			desc->att_max_len = 0;
-			desc->att_max_line_len = 0;
-
-			/* Firebird returns RDB$DB_KEY as "DB_KEY" - set the pseudo-datatype */
-			if (strncmp(desc->desc, "DB_KEY", 6) == 0 && strlen(desc->desc) == 6)
-				desc->type = SQL_DB_KEY;
-			else
-				desc->type = var1->sqltype & ~1;
-
-			desc->has_null = false;
-			result->header[i] = desc;
-		}
+		__compute_result_header_from_sqlda_out(result, conn);
 	}
 
 	/* Store tuple data */
