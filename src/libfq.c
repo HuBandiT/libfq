@@ -106,7 +106,7 @@ static FBresult *_FQexecParams(FBconn *conn,
 							   const int *paramFormats,
 							   int resultFormat);
 
-static void _FQstoreResult(FBresult *result, FBconn *conn, int num_rows);
+static void _FQstoreResult(FBresult *result, FBconn *conn);
 static char *_FQlogLevel(short errlevel);
 static void _FQsetResultError(FBconn *conn, FBresult *res);
 static void _FQsetResultNonFatalError(const FBconn *conn, FBresult *res, short errlevel, char *msg);
@@ -926,7 +926,7 @@ _FQinitResult()
 	result->sqlda_out = NULL;
 	result->stmt_handle = 0L;
 	result->statement_type = 0L;
-	result->ntups = -1;
+	result->ntups = 0;
 	result->ncols = -1;
 	result->resultStatus = FBRES_NO_ACTION;
 	result->errMsg = NULL;
@@ -1358,7 +1358,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 {
 	FBresult	  *result;
 
-	int			  num_rows = 0;
 	ISC_STATUS    retcode;
 
 	bool		  temp_trans = false;
@@ -1550,8 +1549,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 
 	while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
 	{
-		_FQstoreResult(result, conn, num_rows);
-		num_rows++;
+		_FQstoreResult(result, conn);
 	}
 
 	if (retcode != 100L)
@@ -1571,7 +1569,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	}
 
 	result->resultStatus = FBRES_TUPLES_OK;
-	result->ntups = num_rows;
 
 	/* add an array of tuple pointers for offset-based access */
 	_FQexecFillTuplesArray(result);
@@ -2379,17 +2376,13 @@ _FQexecParams(FBconn *conn,
 
 	if (result->statement_type == isc_info_sql_stmt_exec_procedure)
 	{
-		_FQstoreResult(result, conn, 0);
-		result->ntups = 1;
+		_FQstoreResult(result, conn);
 	}
 	else
 	{
-		int num_rows = 0;
-
 		while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
 		{
-			_FQstoreResult(result, conn, num_rows);
-			num_rows ++;
+			_FQstoreResult(result, conn);
 		}
 
 		if (retcode != 100L)
@@ -2412,8 +2405,6 @@ _FQexecParams(FBconn *conn,
 
 			return result;
 		}
-
-		result->ntups = num_rows;
 	}
 
 	/*
@@ -2545,18 +2536,18 @@ static void __compute_result_header_from_sqlda_out(FBresult *result, FBconn *con
 
 
 static void
-_FQstoreResult(FBresult *result, FBconn *conn, int num_rows)
+_FQstoreResult(FBresult *result, FBconn *conn)
 {
 	FQresTuple *tuple_next = (FQresTuple *)malloc(sizeof(FQresTuple));
 	int i;
 
-	tuple_next->position = num_rows;
+	tuple_next->position = result->ntups;
 	tuple_next->max_lines = 1;
 	tuple_next->next = NULL;
 	tuple_next->values = malloc(sizeof(FQresTupleAtt *) * result->ncols);
 
 	/* store header information */
-	if (num_rows == 0)
+	if (result->ntups == 0)
 	{
 		__compute_result_header_from_sqlda_out(result, conn);
 	}
@@ -2604,6 +2595,8 @@ _FQstoreResult(FBresult *result, FBconn *conn, int num_rows)
 		result->tuple_last->next = tuple_next;
 		result->tuple_last = tuple_next;
 	}
+
+	result->ntups++;
 }
 
 
