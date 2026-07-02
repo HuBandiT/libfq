@@ -1349,6 +1349,33 @@ static ISC_STATUS __determine_sql_statement_type_for_result(FBconn *conn, FBresu
 }
 
 
+static ISC_STATUS __load_entire_query_results_into_memory(FBconn *conn, FBresult *result) {
+	ISC_STATUS retcode;
+
+	while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
+	{
+		_FQstoreResult(result, conn);
+	}
+
+	/* we will not receive any more results from this query */
+	_FQexecClearResult(result);
+
+	if (retcode != 100L)
+	{
+		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_fetch() error");
+		result->resultStatus = FBRES_FATAL_ERROR;
+		_FQsetResultError(conn, result);
+
+		return retcode;
+	}
+
+	/* add an array of tuple pointers for offset-based access */
+	_FQexecFillTuplesArray(result);
+
+	result->resultStatus = FBRES_TUPLES_OK;
+}
+
+
 /**
  * _FQexec()
  *
@@ -1359,8 +1386,6 @@ static FBresult *
 _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 {
 	FBresult	  *result;
-
-	ISC_STATUS    retcode;
 
 	bool		  temp_trans = false;
 
@@ -1544,33 +1569,8 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		return result;
 	}
 
-	/* set up tuple holder */
-
-	while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
-	{
-		_FQstoreResult(result, conn);
-	}
-
-	if (retcode != 100L)
-	{
-		_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_fetch() error");
-		result->resultStatus = FBRES_FATAL_ERROR;
-		_FQsetResultError(conn, result);
-
-		/* if autocommit, and no explicit transaction set, rollback */
-		if (conn->autocommit == true && conn->in_user_transaction == false)
-		{
-			_FQrollbackTransaction(conn, trans);
-		}
-
-		_FQexecClearResult(result);
-		return result;
-	}
-
-	result->resultStatus = FBRES_TUPLES_OK;
-
-	/* add an array of tuple pointers for offset-based access */
-	_FQexecFillTuplesArray(result);
+	error = __load_entire_query_results_into_memory(conn, result);
+	/* no error checking because error handling was done inside, so we do the same thing regardless of whether there was an error or not -/
 
 	/* if autocommit, and no explicit transaction set, commit */
 	if (conn->autocommit == true && conn->in_user_transaction == false)
@@ -1579,7 +1579,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	}
 
 	/* clear up internal storage */
-	_FQexecClearResult(result);
 	return result;
 }
 
@@ -2349,9 +2348,6 @@ _FQexecParams(FBconn *conn,
 		return result;
 	}
 
-	/* set up tuple holder */
-	result->header = malloc(sizeof(FQresTupleAttDesc *) * result->ncols);
-
 	/* XXX TODO: only needed for "SELECT ... FOR UPDATE " */
 	if (0 && isc_dsql_set_cursor_name(conn->status, &result->stmt_handle, "dyn_cursor", 0))
 	{
@@ -2373,28 +2369,24 @@ _FQexecParams(FBconn *conn,
 	if (result->statement_type == isc_info_sql_stmt_exec_procedure)
 	{
 		_FQstoreResult(result, conn);
+
+		_FQexecClearResult(result);
+
+		result->resultStatus = FBRES_TUPLES_OK;
+
+		/* add an array for offset-based access */
+		_FQexecFillTuplesArray(result);
 	}
 	else
 	{
-		while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
+		error = __load_entire_query_results_into_memory(conn, result);
+		if (error)
 		{
-			_FQstoreResult(result, conn);
-		}
-
-		if (retcode != 100L)
-		{
-			_FQsaveMessageField(&result, FB_DIAG_DEBUG, "isc_dsql_fetch() error");
-
-			result->resultStatus = FBRES_FATAL_ERROR;
-			_FQsetResultError(conn, result);
-
 			/* if autocommit, and no explicit transaction set, rollback */
 			if (conn->autocommit == true && conn->in_user_transaction == false)
 			{
 				_FQrollbackTransaction(conn, trans);
 			}
-
-			_FQexecClearResult(result);
 
 			if (free_result_stmt_handle)
 				isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
@@ -2446,22 +2438,11 @@ _FQexecParams(FBconn *conn,
 		}
 	}
 
-	/* add an array for offset-based access */
-	_FQexecFillTuplesArray(result);
-
-	result->resultStatus = FBRES_TUPLES_OK;
-
 	/* if autocommit, and no explicit transaction set, commit */
 	if (conn->autocommit == true && conn->in_user_transaction == false)
 	{
 		_FQcommitTransaction(conn, trans);
 	}
-
-	/*
-	 * Clear up internal storage; we already freed the statement handle,
-	 * if required.
-	 */
-	_FQexecClearResult(result);
 
 	return result;
 }
