@@ -1203,6 +1203,8 @@ __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result)
 	if (status)
 		return status;
 
+	result->ncols = result->sqlda_out->sqld;
+
 	__allocate_buffers_for_XSQLVARs_of_XSQLDA(conn, result, result->sqlda_out);
 }
 
@@ -1523,8 +1525,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	error = __allocate_buffers_to_receive_query_result_row(conn, result);
 	if (error)
 		return result;
-
-	result->ncols = result->sqlda_out->sqld;
 
 	if (isc_dsql_execute(conn->status, trans, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out))
 	{
@@ -2237,8 +2237,6 @@ _FQexecParams(FBconn *conn,
 	{
 		return result;
 	}
-
-	result->ncols = result->sqlda_out->sqld;
 
 	FQlog(conn, DEBUG2, "_FQexecParams(): ncols is %i", result->ncols);
 
