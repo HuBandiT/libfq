@@ -934,6 +934,8 @@ _FQinitResult()
 	result->fbSQLCODE = -1L;
 	result->errLine = -1;
 	result->errCol = -1;
+	result->tuple_first = NULL;
+	result->tuple_last = NULL;
 
 	return result;
 }
@@ -1543,9 +1545,6 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 	}
 
 	/* set up tuple holder */
-
-	result->tuple_first = NULL;
-	result->tuple_last = NULL;
 
 	while ((retcode = isc_dsql_fetch(conn->status, &result->stmt_handle, SQL_DIALECT_V6, result->sqlda_out)) == 0)
 	{
@@ -2351,9 +2350,6 @@ _FQexecParams(FBconn *conn,
 	}
 
 	/* set up tuple holder */
-	result->tuple_first = NULL;
-	result->tuple_last = NULL;
-
 	result->header = malloc(sizeof(FQresTupleAttDesc *) * result->ncols);
 
 	/* XXX TODO: only needed for "SELECT ... FOR UPDATE " */
