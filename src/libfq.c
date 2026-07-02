@@ -88,7 +88,6 @@ _FQstartTransaction(FBconn *conn, isc_tr_handle *trans);
 static FQresTupleAtt *_FQformatDatum (FBconn *conn, FQresTupleAttDesc *att_desc, XSQLVAR *var);
 static FBresult *_FQinitResult();
 static void _FQexecClearResult(FBresult *result);
-static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle);
 static void _FQexecClearSQLDA(XSQLDA *sqlda);
 static void _FQexecFillTuplesArray(FBresult *result);
 static ISC_STATUS __allocate_buffers_to_receive_query_result_row(FBconn *conn, FBresult *result);
@@ -965,18 +964,6 @@ _FQexecClearResult(FBresult *result)
 	}
 }
 
-
-
-static void
-_FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle)
-{
-	_FQexecClearResult(result);
-
-	if (free_result_stmt_handle)
-	{
-		isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
-	}
-}
 
 
 /**
@@ -2284,7 +2271,12 @@ _FQexecParams(FBconn *conn,
 				_FQrollbackTransaction(conn, trans);
 			}
 
-			_FQexecClearResultParams(conn, result, free_result_stmt_handle);
+			_FQexecClearResult(result);
+
+			if (free_result_stmt_handle)
+			{
+				isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
+			}
 
 			return result;
 		}
@@ -2297,7 +2289,12 @@ _FQexecParams(FBconn *conn,
 			_FQcommitTransaction(conn, trans);
 		}
 
-		_FQexecClearResultParams(conn, result, free_result_stmt_handle);
+		_FQexecClearResult(result);
+
+		if (free_result_stmt_handle)
+		{
+			isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
+		}
 
 		return result;
 	}
@@ -2343,7 +2340,12 @@ _FQexecParams(FBconn *conn,
 
 		result->resultStatus = FBRES_FATAL_ERROR;
 
-		_FQexecClearResultParams(conn, result, free_result_stmt_handle);
+		_FQexecClearResult(result);
+
+		if (free_result_stmt_handle)
+		{
+			isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
+		}
 
 		return result;
 	}
@@ -2404,7 +2406,12 @@ _FQexecParams(FBconn *conn,
 		_FQrollbackTransaction(conn, trans);
 		result->resultStatus = FBRES_FATAL_ERROR;
 
-		_FQexecClearResultParams(conn, result, free_result_stmt_handle);
+		_FQexecClearResult(result);
+
+		if (free_result_stmt_handle)
+		{
+			isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
+		}
 
 		return result;
 	}
