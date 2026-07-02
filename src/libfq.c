@@ -1376,6 +1376,29 @@ static ISC_STATUS __load_entire_query_results_into_memory(FBconn *conn, FBresult
 }
 
 
+
+static ISC_STATUS __allocate_and_prepare_statement_and_determine_sql_statement_type(FBconn *conn,
+		FBresult *result,
+		isc_tr_handle *trans,
+		const char* stmt,
+		bool version2,
+		XSQLDA *out
+		)
+{
+	ISC_STATUS error = 0;
+
+	if (!error) error = __allocate_statement(conn, result, version2);
+	if (!error) error = __prepare_statement(conn, result, trans, stmt, out);
+	if (!error) error = __determine_sql_statement_type_for_result(conn, result);
+
+	if (error)
+	{
+		_FQrollbackTransaction(conn, trans);
+	}
+
+	return error;
+}
+
 /**
  * _FQexec()
  *
@@ -1387,30 +1410,13 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 {
 	FBresult	  *result;
 
-	bool		  temp_trans = false;
-
 	result = _FQinitResult();
 
 	ISC_STATUS error;
 
-	error = __allocate_statement(conn, result, false);
-	if (error)
-	{
-		return result;
-	}
-
-	/* Prepare the statement. */
-	error = __prepare_statement(conn, result, trans, stmt, result->sqlda_out);
+	error = __allocate_and_prepare_statement_and_determine_sql_statement_type(conn, result, trans, stmt, false, result->sqlda_out);
 	if (error)
 		return result;
-
-	/* Determine the statement's type */
-	error = __determine_sql_statement_type_for_result(conn, result);
-	if (error)
-	{
-		_FQrollbackTransaction(conn, trans);
-		return result;
-	}
 
 	/* Query will not return rows */
 	if (!result->sqlda_out->sqld)
@@ -1482,7 +1488,8 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 		{
 			FQlog(conn, DEBUG1, "statement_type is DDL");
 
-			temp_trans = false;
+			bool temp_trans = false;
+
 			if (*trans == 0L)
 			{
 				_FQstartTransaction(conn, trans);
@@ -1658,22 +1665,9 @@ FQprepare(FBconn *conn,
 	/* Allocate a statement. */
 	ISC_STATUS error;
 
-	error = __allocate_statement(conn, result, true);
+	error = __allocate_and_prepare_statement_and_determine_sql_statement_type(conn, result, trans, stmt, true, NULL);
 	if (error)
 		return result;
-
-	/* Prepare the statement. */
-	error = __prepare_statement(conn, result, trans, stmt, NULL);
-	if (error)
-		return result;
-
-	/* Determine the statement's type */
-	error = __determine_sql_statement_type_for_result(conn, result);
-	if (error)
-	{
-		_FQrollbackTransaction(conn, trans);
-		return result;
-	}
 
 	FQlog(conn, DEBUG1, "statement_type: %i", result->statement_type);
 
