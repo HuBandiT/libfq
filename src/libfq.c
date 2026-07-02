@@ -86,8 +86,7 @@ static FQtransactionStatusType
 _FQstartTransaction(FBconn *conn, isc_tr_handle *trans);
 
 static FQresTupleAtt *_FQformatDatum (FBconn *conn, FQresTupleAttDesc *att_desc, XSQLVAR *var);
-static FBresult *_FQinitResult(bool init_sqlda_in);
-static void _FQinitResultSqlDa(FBresult *result, bool init_sqlda_in);
+static FBresult *_FQinitResult();
 static void _FQexecClearResult(FBresult *result);
 static void _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_handle);
 static void _FQexecClearSQLDA(XSQLDA *sqlda);
@@ -918,14 +917,14 @@ FQsetGetdsplen(FBconn *conn, bool get_dsp_len)
  * preallocate in/out SQLDAs.
  */
 static FBresult *
-_FQinitResult(bool init_sqlda_in)
+_FQinitResult()
 {
 	FBresult *result;
 
 	result = malloc(sizeof(FBresult));
 
-	_FQinitResultSqlDa(result, init_sqlda_in);
-
+	result->sqlda_in = NULL;
+	result->sqlda_out = NULL;
 	result->stmt_handle = 0L;
 	result->statement_type = 0L;
 	result->ntups = -1;
@@ -940,20 +939,6 @@ _FQinitResult(bool init_sqlda_in)
 	return result;
 }
 
-static void
-_FQinitResultSqlDa(FBresult *result, bool init_sqlda_in)
-{
-	if (init_sqlda_in == true)
-	{
-		result->sqlda_in = ___allocate_XSQLDA(FB_XSQLDA_INITLEN);
-	}
-	else
-	{
-		result->sqlda_in = NULL;
-	}
-
-	result->sqlda_out = ___allocate_XSQLDA(FB_XSQLDA_INITLEN);
-}
 
 /**
  * _FQexecClearResult()
@@ -990,10 +975,6 @@ _FQexecClearResultParams(FBconn *conn, FBresult *result, bool free_result_stmt_h
 	if (free_result_stmt_handle)
 	{
 		isc_dsql_free_statement(conn->status, &result->stmt_handle, DSQL_drop);
-	}
-	else
-	{
-		_FQinitResultSqlDa(result, true);
 	}
 }
 
@@ -1397,7 +1378,7 @@ _FQexec(FBconn *conn, isc_tr_handle *trans, const char *stmt)
 
 	bool		  temp_trans = false;
 
-	result = _FQinitResult(false);
+	result = _FQinitResult();
 
 	ISC_STATUS error;
 
@@ -1702,7 +1683,7 @@ FQprepare(FBconn *conn,
 	FBresult	 *result;
 	isc_tr_handle *trans = &conn->trans;
 
-	result = _FQinitResult(true);
+	result = _FQinitResult();
 
 	/* Allocate a statement. */
 	ISC_STATUS error;
@@ -3384,7 +3365,7 @@ _FQsaveMessageField(FBresult **res, FQdiagType code, const char *value, ...)
 	 */
 	if (*res == NULL)
 	{
-		*res = _FQinitResult(false);
+		*res = _FQinitResult();
 	}
 
 	/*
@@ -4481,7 +4462,7 @@ _FQexplainStatement(FBconn *conn, const char *stmt, char plan_type)
 	char *plan_out = NULL;
 	short plan_length;
 
-	result = _FQinitResult(false);
+	result = _FQinitResult();
 
 	if (!conn)
 	{
